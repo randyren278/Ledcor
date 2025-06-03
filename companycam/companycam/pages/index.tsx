@@ -98,7 +98,7 @@ const Home: NextPage<HomeProps> = ({ projects: initialProjects, stats: initialSt
                 <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
                   <Sparkles className="w-5 h-5 text-white" />
                 </div>
-                <h1 className="text-2xl font-bold text-gray-900">AI Notes</h1>
+                <h1 className="text-2xl font-bold text-gray-900">Smart Notes</h1>
               </div>
               <div className="hidden sm:block px-3 py-1 bg-blue-100 text-blue-800 text-xs font-semibold rounded-full">
                 {projects.length} project{projects.length !== 1 ? 's' : ''}
@@ -136,7 +136,7 @@ const Home: NextPage<HomeProps> = ({ projects: initialProjects, stats: initialSt
         {/* Welcome Section */}
         <div className="mb-8">
           <h2 className="text-3xl font-bold text-gray-900 mb-2">Welcome back! 👋</h2>
-          <p className="text-gray-600">Manage your AI-powered voice notes and projects</p>
+          <p className="text-gray-600">Manage your voice notes and projects</p>
         </div>
 
         {/* Quick Stats */}

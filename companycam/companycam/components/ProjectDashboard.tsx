@@ -119,7 +119,7 @@ export default function ProjectDashboard({ projects, onCreateProject, onSelectPr
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-16">
             <div className="flex items-center space-x-4">
-              <h1 className="text-2xl font-bold text-gray-900">AI Notes</h1>
+              <h1 className="text-2xl font-bold text-gray-900">Smart Notes</h1>
               <div className="hidden sm:block px-3 py-1 bg-blue-100 text-blue-800 text-xs font-semibold rounded-full">
                 {projects.length} project{projects.length !== 1 ? 's' : ''}
               </div>
