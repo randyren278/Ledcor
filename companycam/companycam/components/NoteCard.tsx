@@ -18,6 +18,7 @@ interface NoteCardProps {
   note: Note;
   onExpand?: (note: Note) => void;
   onShare?: (note: Note) => void;
+  onDownload?: (note: Note) => void;
   // We no longer call onDownload here, since the <a> tag handles the download directly
 }
 

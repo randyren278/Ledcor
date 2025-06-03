@@ -27,11 +27,21 @@ export interface Note {
     audio: File;
     images: File[];
   }
+
+  export interface Stats {
+    totalNotes: number;
+    audioNotes: number;
+    imageNotes: number;
+    transcribedNotes: number;
+    totalWords: number;
+    totalDuration: number;
+  }
   
   export interface UploadResponse {
     ok: boolean;
     note?: Note;
     error?: string;
+    reportUrl?: string;
   }
   
   export interface TranscriptionResult {
