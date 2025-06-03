@@ -2,9 +2,6 @@
 import { NextApiRequest, NextApiResponse } from 'next';
 import nextConnect from 'next-connect';
 import multer from 'multer';
-import fs from 'fs';
-import path from 'path';
-import os from 'os';
 import { spawn } from 'child_process';
 import { getProject, addNoteToProject } from '../../lib/data';
 import { Note, TranscriptionResult, UploadResponse } from '../../types';
@@ -25,26 +22,8 @@ interface ExtendedNextApiRequest extends NextApiRequest {
 // Are we in production on Vercel?
 const isProd = process.env.NODE_ENV === 'production';
 
-// Choose an upload folder that’s writable:
-const baseDir = isProd ? os.tmpdir() : path.join(process.cwd(), 'public');
-const uploadDir = path.join(baseDir, 'uploads');
-const reportsDir = path.join(baseDir, 'reports');
-
-// Create the folders if they don’t exist yet
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
-}
-if (!fs.existsSync(reportsDir)) {
-  fs.mkdirSync(reportsDir, { recursive: true });
-}
-
-// Multer setup
-const storage = multer.diskStorage({
-  destination: uploadDir,
-  filename: (_, file, cb) => {
-    cb(null, `${Date.now()}_${file.originalname}`);
-  }
-});
+// Multer setup - keep uploaded files in memory only
+const storage = multer.memoryStorage();
 const upload = multer({
   storage,
   limits: { fileSize: 50 * 1024 * 1024, files: 11 },
@@ -71,130 +50,8 @@ const handler = nextConnect<ExtendedNextApiRequest, NextApiResponse<UploadRespon
 handler.use(upload.fields([{ name: 'audio', maxCount: 1 }, { name: 'images', maxCount: 10 }]));
 
 // -------------- TRANSLATION / TRANSCRIPTION LOGIC --------------
-async function runPythonTranscribe(audioPath: string): Promise<TranscriptionResult> {
-  // We only call this in development:
-  return new Promise((resolve) => {
-    const scriptPath = path.join(process.cwd(), 'python', 'transcribe.py');
-    if (!fs.existsSync(scriptPath)) {
-      console.warn('Dev: transcribe.py missing → fallback');
-      return resolve({
-        success: true,
-        language: 'en',
-        language_probability: 0.95,
-        text: 'Audio note recorded – transcription script not available',
-        duration: 60
-      });
-    }
-    if (!fs.existsSync(audioPath)) {
-      return resolve({
-        success: false,
-        error: 'Audio file not found'
-      });
-    }
 
-    let stdout = '';
-    let stderr = '';
-    let didResolve = false;
-
-    let pyProc;
-    try {
-      pyProc = spawn('python3', [scriptPath, audioPath], {
-        env: {
-          ...process.env,
-          WHISPER_MODEL_SIZE: 'base',
-          WHISPER_DEVICE: 'cpu',
-          WHISPER_COMPUTE_TYPE: 'int8'
-        }
-      });
-    } catch (spawnErr) {
-      console.warn('Failed to spawn Python → fallback', spawnErr);
-      return resolve({
-        success: true,
-        language: 'en',
-        language_probability: 0.95,
-        text: 'Audio note recorded – Python failed to start',
-        duration: 60
-      });
-    }
-
-    pyProc.stdout.on('data', (data: Buffer) => {
-      stdout += data.toString();
-    });
-    pyProc.stderr.on('data', (data: Buffer) => {
-      stderr += data.toString();
-      console.log('Whisper stderr:', data.toString().trim());
-    });
-
-    pyProc.on('close', (code) => {
-      if (didResolve) return;
-      didResolve = true;
-      if (code === 0 && stdout.trim()) {
-        try {
-          const cleanOutput = stdout.trim();
-          const start = cleanOutput.indexOf('{');
-          const end = cleanOutput.lastIndexOf('}') + 1;
-          if (start < 0 || end < 0) throw new Error('No JSON found');
-          const jsonStr = cleanOutput.slice(start, end);
-          const result: TranscriptionResult = JSON.parse(jsonStr);
-          if (result.success && result.text) {
-            return resolve(result);
-          } else {
-            throw new Error(result.error || 'No text returned');
-          }
-        } catch (parseErr) {
-          console.warn('Parse error → fallback', parseErr, stdout);
-          return resolve({
-            success: true,
-            language: 'en',
-            language_probability: 0.95,
-            text: 'Audio note recorded – parse failed',
-            duration: 60
-          });
-        }
-      } else {
-        console.warn(`Python exited ${code} → fallback`, stderr);
-        return resolve({
-          success: true,
-          language: 'en',
-          language_probability: 0.95,
-          text: 'Audio note recorded – transcription process failed',
-          duration: 60
-        });
-      }
-    });
-
-    pyProc.on('error', (err) => {
-      if (didResolve) return;
-      didResolve = true;
-      console.warn('Python process error → fallback', err);
-      return resolve({
-        success: true,
-        language: 'en',
-        language_probability: 0.95,
-        text: 'Audio note recorded – process error',
-        duration: 60
-      });
-    });
-
-    // Timeout after 60s
-    setTimeout(() => {
-      if (didResolve) return;
-      didResolve = true;
-      if (pyProc) pyProc.kill();
-      console.warn('Transcription timed out → fallback');
-      return resolve({
-        success: true,
-        language: 'en',
-        language_probability: 0.95,
-        text: 'Audio note recorded – transcription timed out',
-        duration: 60
-      });
-    }, 60_000);
-  });
-}
-
-async function transcribeAudio(audioPath: string, clientTranscription?: string): Promise<TranscriptionResult> {
-  // If client provided transcription, use it
+async function transcribeAudio(clientTranscription?: string): Promise<TranscriptionResult> {
   if (clientTranscription) {
     console.log('Using client-side transcription');
     return {
@@ -202,33 +59,24 @@ async function transcribeAudio(audioPath: string, clientTranscription?: string):
       language: 'en',
       language_probability: 0.95,
       text: clientTranscription,
-      duration: 60 // You could calculate this client-side if needed
+      duration: 60
     };
   }
 
-  if (!isProd) {
-    // Dev → try real Python
-    return runPythonTranscribe(audioPath);
-  }
-  // Production (Vercel) → fallback
   return {
     success: true,
     language: 'en',
     language_probability: 0.95,
-    text: `Audio note recorded on ${new Date().toLocaleDateString()}`,
+    text: 'Audio note recorded',
     duration: 60
   };
 }
 
 // -------------- NOTE CREATION --------------
 async function createNote(
-  audioPath: string,
-  imagePaths: string[],
   transcriptionResult: TranscriptionResult
 ): Promise<Note> {
   const timestamp = new Date().toISOString();
-  const audioBasename = path.basename(audioPath);
-  const imageBasenames = imagePaths.map(p => path.basename(p));
 
   // summary = first 10 words of transcription
   let summary = 'Audio note recorded';
@@ -241,8 +89,6 @@ async function createNote(
   const note: Note = {
     id: Date.now().toString(),
     timestamp,
-    audio: audioBasename,
-    images: imageBasenames,
     transcription: transcriptionResult.text || '',
     language: transcriptionResult.language || 'unknown',
     summary,
@@ -262,16 +108,17 @@ async function createNote(
 // -------------- PDF GENERATION --------------
 async function generatePdfReport(
   note: Note,
-  projectName: string,
-  fullImagePaths: string[]
+  projectName: string
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     try {
-      const pdfFilename = `${note.id}.pdf`;
-      const pdfPath = path.join(reportsDir, pdfFilename);
       const doc = new PDFDocument({ autoFirstPage: true });
-      const writeStream = fs.createWriteStream(pdfPath);
-      doc.pipe(writeStream);
+      const chunks: Buffer[] = [];
+      doc.on('data', (c) => chunks.push(c));
+      doc.on('end', () => {
+        const base64Pdf = Buffer.concat(chunks).toString('base64');
+        resolve(base64Pdf);
+      });
 
       // Title
       doc.fontSize(18).text(`Project: ${projectName}`, { underline: true });
@@ -303,44 +150,7 @@ async function generatePdfReport(
         doc.moveDown(0.5);
       }
 
-      // Images
-      if (fullImagePaths.length > 0) {
-        doc.addPage();
-        doc.fontSize(14).text('Attached Images:', { underline: true });
-        doc.moveDown(0.5);
-
-        const maxW = 250;
-        const maxH = 250;
-        let x = doc.page.margins.left;
-        let y = doc.y;
-
-        fullImagePaths.forEach((imgPath, idx) => {
-          try {
-            if (fs.existsSync(imgPath)) {
-              doc.image(imgPath, x, y, { fit: [maxW, maxH] });
-            }
-          } catch (e) {
-            console.warn(`Could not embed ${imgPath}:`, e);
-          }
-          x += maxW + 20;
-          if ((idx + 1) % 2 === 0) {
-            x = doc.page.margins.left;
-            y += maxH + 20;
-            if (y + maxH > doc.page.height - doc.page.margins.bottom) {
-              doc.addPage();
-              y = doc.page.margins.top;
-            }
-          }
-        });
-      }
-
       doc.end();
-      writeStream.on('finish', () => {
-        const buf = fs.readFileSync(pdfPath);
-        const base64Pdf = buf.toString('base64');
-        resolve(base64Pdf);
-      });
-      writeStream.on('error', (err) => reject(err));
     } catch (err) {
       reject(err);
     }
@@ -362,24 +172,12 @@ handler.post(async (req: ExtendedNextApiRequest, res) => {
     }
 
     const audioFile = req.files?.audio?.[0];
-    const imageFiles = req.files?.images || [];
-    if (!audioFile) {
-      return res.status(400).json({ ok: false, error: 'Audio file is required' });
-    }
-
-    if (!fs.existsSync(audioFile.path)) {
-      return res.status(500).json({ ok: false, error: 'Uploaded audio not found on disk' });
-    }
-
-    // Transcribe (or use client transcription)
     console.log('Starting transcription (client provided: ' + !!clientTranscription + ')');
-    const transcriptionResult = await transcribeAudio(audioFile.path, clientTranscription);
+    const transcriptionResult = await transcribeAudio(clientTranscription);
     console.log('Transcription complete:', transcriptionResult);
 
     // Build Note
     const note = await createNote(
-      audioFile.path,
-      imageFiles.map(f => f.path),
       transcriptionResult
     );
 
@@ -388,21 +186,9 @@ handler.post(async (req: ExtendedNextApiRequest, res) => {
     if (!updated) {
       return res.status(500).json({ ok: false, error: 'Failed to attach note to project' });
     }
-
-    // Generate PDF → base64
-    const fullImagePaths = imageFiles.map(f => path.resolve(f.path));
-    let pdfBase64 = '';
-    try {
-      pdfBase64 = await generatePdfReport(note, project.name, fullImagePaths);
-    } catch (pdfErr) {
-      console.error('PDF generation failed:', pdfErr);
-    }
-
-    // Return the note + PDF (base64) in JSON
     return res.status(200).json({
       ok: true,
-      note,
-      pdfBase64
+      note
     });
   } catch (err) {
     console.error('Handler error:', err);

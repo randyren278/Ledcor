@@ -1,6 +1,7 @@
 // /components/NoteCard.tsx
 import { useState, useRef, useEffect } from 'react';
 import { Play, Pause, Volume2, Camera, Clock, User, Expand, Download, Share } from 'lucide-react';
+import { useRouter } from 'next/router';
 
 interface Note {
   id: string;
@@ -175,6 +176,8 @@ function ImageGallery({ images }: { images: string[] }) {
 
 export default function NoteCard({ note, onExpand, onShare }: NoteCardProps) {
   const [isExpanded, setIsExpanded] = useState(false);
+  const router = useRouter();
+  const { id: projectId } = router.query as { id?: string };
 
   const displayText = note.summary || note.transcription || note.text || '';
   const previewText =
@@ -229,9 +232,8 @@ export default function NoteCard({ note, onExpand, onShare }: NoteCardProps) {
               <Share className="w-4 h-4" />
             </button>
 
-            {/* Download PDF directly from public/reports/{note.id}.pdf */}
             <a
-              href={`/reports/${note.id}.pdf`}
+              href={projectId ? `/api/project/${projectId}/note/${note.id}` : '#'}
               download
               className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
             >
