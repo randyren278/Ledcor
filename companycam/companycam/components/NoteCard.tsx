@@ -1,5 +1,5 @@
 // /components/NoteCard.tsx
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { Play, Pause, Volume2, Camera, Clock, User, Expand, Download, Share } from 'lucide-react';
 
 interface Note {
@@ -18,17 +18,23 @@ interface NoteCardProps {
   note: Note;
   onExpand?: (note: Note) => void;
   onShare?: (note: Note) => void;
-  onDownload?: (note: Note) => void;
+  // We no longer call onDownload here, since the <a> tag handles the download directly
 }
 
-function AudioPlayer({ audioSrc, duration }: { audioSrc: string; duration?: number }) {
+function AudioPlayer({ audioSrc }: { audioSrc: string }) {
+  const audioRef = useRef<HTMLAudioElement | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
-  const [audioDuration, setAudioDuration] = useState(duration || 0);
+  const [audioDuration, setAudioDuration] = useState(0);
 
   const togglePlayPause = () => {
+    if (!audioRef.current) return;
+    if (isPlaying) {
+      audioRef.current.pause();
+    } else {
+      audioRef.current.play();
+    }
     setIsPlaying(!isPlaying);
-    // Audio control logic would go here
   };
 
   const formatTime = (seconds: number) => {
@@ -37,8 +43,45 @@ function AudioPlayer({ audioSrc, duration }: { audioSrc: string; duration?: numb
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
+  useEffect(() => {
+    const audioEl = audioRef.current;
+    if (!audioEl) return;
+
+    const onLoadedMetadata = () => {
+      setAudioDuration(audioEl.duration);
+    };
+    const onTimeUpdate = () => {
+      setCurrentTime(audioEl.currentTime);
+    };
+    const onEnded = () => {
+      setIsPlaying(false);
+      setCurrentTime(0);
+    };
+
+    audioEl.addEventListener('loadedmetadata', onLoadedMetadata);
+    audioEl.addEventListener('timeupdate', onTimeUpdate);
+    audioEl.addEventListener('ended', onEnded);
+
+    return () => {
+      audioEl.removeEventListener('loadedmetadata', onLoadedMetadata);
+      audioEl.removeEventListener('timeupdate', onTimeUpdate);
+      audioEl.removeEventListener('ended', onEnded);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.currentTime = 0;
+    }
+    setIsPlaying(false);
+    setCurrentTime(0);
+    setAudioDuration(0);
+  }, [audioSrc]);
+
   return (
     <div className="bg-gray-50 rounded-lg p-4">
+      <audio ref={audioRef} src={`/uploads/${audioSrc}`} preload="metadata" />
       <div className="flex items-center space-x-4">
         <button
           onClick={togglePlayPause}
@@ -50,22 +93,29 @@ function AudioPlayer({ audioSrc, duration }: { audioSrc: string; duration?: numb
             <Play className="w-5 h-5 text-white ml-0.5" />
           )}
         </button>
-        
+
         <div className="flex-1">
           <div className="flex items-center justify-between text-sm text-gray-600 mb-1">
             <span className="flex items-center space-x-1">
               <Volume2 className="w-4 h-4" />
               <span>Audio Note</span>
             </span>
-            <span>{formatTime(audioDuration)}</span>
+            <span>
+              {formatTime(currentTime)} / {formatTime(audioDuration)}
+            </span>
           </div>
-          
+
           {/* Progress Bar */}
           <div className="w-full bg-gray-200 rounded-full h-2">
-            <div 
+            <div
               className="bg-blue-500 h-2 rounded-full transition-all duration-300"
-              style={{ width: `${(currentTime / audioDuration) * 100}%` }}
-            ></div>
+              style={{
+                width:
+                  audioDuration > 0
+                    ? `${(currentTime / audioDuration) * 100}%`
+                    : '0%',
+              }}
+            />
           </div>
         </div>
       </div>
@@ -87,7 +137,7 @@ function ImageGallery({ images }: { images: string[] }) {
           alt={`Photo ${selectedImage + 1}`}
           className="w-full h-full object-cover"
         />
-        
+
         {/* Image Counter */}
         {images.length > 1 && (
           <div className="absolute top-3 right-3 bg-black/70 text-white px-2 py-1 rounded-lg text-sm">
@@ -95,7 +145,7 @@ function ImageGallery({ images }: { images: string[] }) {
           </div>
         )}
       </div>
-      
+
       {/* Thumbnail Strip */}
       {images.length > 1 && (
         <div className="flex space-x-2 overflow-x-auto pb-2">
@@ -122,12 +172,14 @@ function ImageGallery({ images }: { images: string[] }) {
   );
 }
 
-export default function NoteCard({ note, onExpand, onShare, onDownload }: NoteCardProps) {
+export default function NoteCard({ note, onExpand, onShare }: NoteCardProps) {
   const [isExpanded, setIsExpanded] = useState(false);
-  
+
   const displayText = note.summary || note.transcription || note.text || '';
-  const previewText = displayText.length > 200 ? displayText.slice(0, 200) + '...' : displayText;
-  const hasMedia = (note.audio && note.audio.length > 0) || (note.images && note.images.length > 0);
+  const previewText =
+    displayText.length > 200 ? displayText.slice(0, 200) + '...' : displayText;
+  const hasMedia =
+    (note.audio && note.audio.length > 0) || (note.images && note.images.length > 0);
 
   const formatDate = (timestamp: string) => {
     const date = new Date(timestamp);
@@ -166,7 +218,7 @@ export default function NoteCard({ note, onExpand, onShare, onDownload }: NoteCa
               </div>
             </div>
           </div>
-          
+
           {/* Actions */}
           <div className="flex items-center space-x-2">
             <button
@@ -175,12 +227,16 @@ export default function NoteCard({ note, onExpand, onShare, onDownload }: NoteCa
             >
               <Share className="w-4 h-4" />
             </button>
-            <button
-              onClick={() => onDownload?.(note)}
+
+            {/* Download PDF directly from public/reports/{note.id}.pdf */}
+            <a
+              href={`/reports/${note.id}.pdf`}
+              download
               className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
             >
               <Download className="w-4 h-4" />
-            </button>
+            </a>
+
             <button
               onClick={() => setIsExpanded(!isExpanded)}
               className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
@@ -213,10 +269,8 @@ export default function NoteCard({ note, onExpand, onShare, onDownload }: NoteCa
       {hasMedia && (
         <div className="px-6 pb-4 space-y-4">
           {/* Audio Player */}
-          {note.audio && (
-            <AudioPlayer audioSrc={note.audio} duration={note.duration} />
-          )}
-          
+          {note.audio && <AudioPlayer audioSrc={note.audio} />}
+
           {/* Image Gallery */}
           {note.images && note.images.length > 0 && (
             <ImageGallery images={note.images} />
@@ -237,7 +291,10 @@ export default function NoteCard({ note, onExpand, onShare, onDownload }: NoteCa
             {note.images && note.images.length > 0 && (
               <div className="flex items-center space-x-1">
                 <Camera className="w-4 h-4" />
-                <span>{note.images.length} photo{note.images.length !== 1 ? 's' : ''}</span>
+                <span>
+                  {note.images.length} photo
+                  {note.images.length !== 1 ? 's' : ''}
+                </span>
               </div>
             )}
             {note.transcription && (
@@ -247,7 +304,7 @@ export default function NoteCard({ note, onExpand, onShare, onDownload }: NoteCa
               </div>
             )}
           </div>
-          
+
           {displayText.length > 0 && (
             <span className="text-xs text-gray-400">
               {displayText.split(' ').length} words
