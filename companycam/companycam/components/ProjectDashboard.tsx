@@ -84,7 +84,7 @@ function ProjectCard({ project, onClick }: { project: Project; onClick: () => vo
                   <div className="flex items-center space-x-2 mt-1">
                     <Clock className="w-3 h-3 text-gray-400" />
                     <span className="text-xs text-gray-500">
-                      {new Date(note.timestamp).toLocaleDateString()}
+                      {new Date(note.timestamp).toLocaleDateString('en-US')}
                     </span>
                   </div>
                 </div>

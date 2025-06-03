@@ -1,10 +1,10 @@
 // /pages/index.tsx
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useRouter } from 'next/router';
-import { Plus, Mic, Camera, Clock, Search, Filter, Sparkles } from 'lucide-react';
-import { getAllProjects, createProject, getGlobalStats } from '../lib/data';
+import { Plus, Mic, Camera, Sparkles, Search } from 'lucide-react';
 import ProjectCard from '../components/ProjectCard';
-import { Project } from '../types';
+import type { Project } from '../types';
+import type { GetServerSideProps, NextPage } from 'next';
 
 const PROJECT_COLORS = [
   'bg-gradient-to-br from-blue-500 to-blue-700',
@@ -15,38 +15,67 @@ const PROJECT_COLORS = [
   'bg-gradient-to-br from-pink-500 to-pink-700',
 ];
 
-export default function Home() {
+interface HomeProps {
+  projects: Project[];
+  stats: {
+    totalProjects: number;
+    totalNotes: number;
+    totalAudioNotes: number;
+    totalImages: number;
+  };
+}
+
+const Home: NextPage<HomeProps> = ({ projects: initialProjects, stats: initialStats }) => {
   const router = useRouter();
-  const [projects, setProjects] = useState<Project[]>([]);
+
+  const [projects, setProjects] = useState<Project[]>(initialProjects);
+  const [stats, setStats] = useState(initialStats);
+
   const [searchTerm, setSearchTerm] = useState('');
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newProjectName, setNewProjectName] = useState('');
   const [newProjectDescription, setNewProjectDescription] = useState('');
   const [isCreating, setIsCreating] = useState(false);
 
-  // Load projects on mount
-  useEffect(() => {
-    const allProjects = getAllProjects();
-    setProjects(allProjects);
-  }, []);
-
-  const filteredProjects = projects.filter(project =>
+  // Filter projects by name
+  const filteredProjects = projects.filter((project) =>
     project.name.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   const handleCreateProject = async () => {
     if (!newProjectName.trim()) return;
-    
+
     setIsCreating(true);
     try {
-      const newProject = createProject(newProjectName.trim(), newProjectDescription.trim() || undefined);
-      setProjects(prev => [...prev, newProject]);
+      const resp = await fetch('/api/projects', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: newProjectName.trim(),
+          description: newProjectDescription.trim() || undefined,
+        }),
+      });
+
+      if (!resp.ok) {
+        console.error('Failed to create project', await resp.text());
+        setIsCreating(false);
+        return;
+      }
+
+      const { project: created } = (await resp.json()) as { project: Project };
+      // Update UI list
+      setProjects((prev) => [...prev, created]);
+      setStats((prev) => ({
+        ...prev,
+        totalProjects: prev.totalProjects + 1,
+      }));
+
       setShowCreateModal(false);
       setNewProjectName('');
       setNewProjectDescription('');
-      
-      // Navigate to the new project
-      router.push(`/project/${newProject.id}`);
+
+      // Navigate to the newly created project
+      router.push(`/project/${created.id}`);
     } catch (error) {
       console.error('Error creating project:', error);
     } finally {
@@ -57,8 +86,6 @@ export default function Home() {
   const handleSelectProject = (projectId: string) => {
     router.push(`/project/${projectId}`);
   };
-
-  const stats = getGlobalStats();
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -77,7 +104,7 @@ export default function Home() {
                 {projects.length} project{projects.length !== 1 ? 's' : ''}
               </div>
             </div>
-            
+
             <div className="flex items-center space-x-3">
               {/* Search */}
               <div className="relative">
@@ -90,8 +117,8 @@ export default function Home() {
                   className="pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
               </div>
-              
-              {/* Create Project Button */}
+
+              {/* “New Project” button triggers modal */}
               <button
                 onClick={() => setShowCreateModal(true)}
                 className="flex items-center space-x-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-colors duration-200 shadow-sm hover:shadow-md"
@@ -108,12 +135,8 @@ export default function Home() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* Welcome Section */}
         <div className="mb-8">
-          <h2 className="text-3xl font-bold text-gray-900 mb-2">
-            Welcome back! 👋
-          </h2>
-          <p className="text-gray-600">
-            Manage your AI-powered voice notes and projects
-          </p>
+          <h2 className="text-3xl font-bold text-gray-900 mb-2">Welcome back! 👋</h2>
+          <p className="text-gray-600">Manage your AI-powered voice notes and projects</p>
         </div>
 
         {/* Quick Stats */}
@@ -129,7 +152,7 @@ export default function Home() {
               </div>
             </div>
           </div>
-          
+
           <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-100">
             <div className="flex items-center">
               <div className="p-3 bg-green-100 rounded-lg">
@@ -141,7 +164,7 @@ export default function Home() {
               </div>
             </div>
           </div>
-          
+
           <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-100">
             <div className="flex items-center">
               <div className="p-3 bg-purple-100 rounded-lg">
@@ -153,7 +176,7 @@ export default function Home() {
               </div>
             </div>
           </div>
-          
+
           <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-100">
             <div className="flex items-center">
               <div className="p-3 bg-yellow-100 rounded-lg">
@@ -172,10 +195,12 @@ export default function Home() {
           <div>
             <div className="flex items-center justify-between mb-6">
               <h3 className="text-xl font-semibold text-gray-900">
-                {searchTerm ? `Search Results (${filteredProjects.length})` : 'Your Projects'}
+                {searchTerm
+                  ? `Search Results (${filteredProjects.length})`
+                  : 'Your Projects'}
               </h3>
             </div>
-            
+
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {filteredProjects.map((project, index) => (
                 <ProjectCard
@@ -200,10 +225,9 @@ export default function Home() {
               {searchTerm ? 'No projects found' : 'No projects yet'}
             </h3>
             <p className="text-gray-500 mb-6 max-w-md mx-auto">
-              {searchTerm 
+              {searchTerm
                 ? `No projects match "${searchTerm}". Try a different search term.`
-                : 'Get started by creating your first project to organize your AI-powered notes.'
-              }
+                : 'Get started by creating your first project to organize your AI-powered notes.'}
             </p>
             {!searchTerm && (
               <button
@@ -223,7 +247,7 @@ export default function Home() {
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6">
             <h3 className="text-xl font-bold text-gray-900 mb-4">Create New Project</h3>
-            
+
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -238,7 +262,7 @@ export default function Home() {
                   autoFocus
                 />
               </div>
-              
+
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Description
@@ -252,7 +276,7 @@ export default function Home() {
                 />
               </div>
             </div>
-            
+
             <div className="flex items-center space-x-3 mt-6">
               <button
                 onClick={handleCreateProject}
@@ -277,4 +301,25 @@ export default function Home() {
       )}
     </div>
   );
-}
+};
+
+// ─── “getServerSideProps” to fetch projects + stats on the server ───────────────
+export const getServerSideProps: GetServerSideProps<HomeProps> = async () => {
+  // Server-side only: can safely call fs-based functions
+  const resp = await fetch(`http://localhost:${process.env.PORT || 3000}/api/projects`);
+  // Note: in production, use absolute URL or Next.js environment variables:
+  // e.g. `${process.env.NEXT_PUBLIC_BASE_URL}/api/projects`
+  const { projects, stats } = (await resp.json()) as {
+    projects: Project[];
+    stats: HomeProps['stats'];
+  };
+
+  return {
+    props: {
+      projects,
+      stats,
+    },
+  };
+};
+
+export default Home;

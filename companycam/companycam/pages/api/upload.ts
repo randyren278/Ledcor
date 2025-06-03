@@ -8,6 +8,9 @@ import { spawn } from 'child_process';
 import { getProject, addNoteToProject } from '../../lib/data';
 import { Note, TranscriptionResult, UploadResponse } from '../../types';
 
+// ➤ Add this import at the top:
+import PDFDocument from 'pdfkit';
+
 // Extend NextApiRequest to include files from multer
 interface ExtendedNextApiRequest extends NextApiRequest {
   files?: {
@@ -16,10 +19,16 @@ interface ExtendedNextApiRequest extends NextApiRequest {
   };
 }
 
-// Create upload directory if it doesn't exist
+// Ensure upload directory exists
 const uploadDir = path.join(process.cwd(), 'public', 'uploads');
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
+}
+
+// Ensure reports directory exists
+const reportsDir = path.join(process.cwd(), 'public', 'reports');
+if (!fs.existsSync(reportsDir)) {
+  fs.mkdirSync(reportsDir, { recursive: true });
 }
 
 // Configure multer for file storage
@@ -37,7 +46,6 @@ const upload = multer({
     files: 11 // 1 audio + 10 images max
   },
   fileFilter: (req, file, callback) => {
-    // Validate file types
     if (file.fieldname === 'audio') {
       if (file.mimetype.startsWith('audio/')) {
         callback(null, true);
@@ -87,13 +95,10 @@ function transcribeAudio(audioPath: string): Promise<TranscriptionResult> {
     console.log('Running transcription script:', scriptPath);
     console.log('Audio file:', audioPath);
     
-    // Validate script exists
     if (!fs.existsSync(scriptPath)) {
       reject(new Error('Transcription script not found'));
       return;
     }
-    
-    // Validate audio file exists
     if (!fs.existsSync(audioPath)) {
       reject(new Error('Audio file not found'));
       return;
@@ -102,9 +107,9 @@ function transcribeAudio(audioPath: string): Promise<TranscriptionResult> {
     const pythonProcess = spawn('python3', [scriptPath, audioPath], {
       env: {
         ...process.env,
-        WHISPER_MODEL_SIZE: 'base',  // Use 'large-v3' for better accuracy
-        WHISPER_DEVICE: 'cpu',       // Change to 'cuda' if you have GPU
-        WHISPER_COMPUTE_TYPE: 'int8' // Use 'float16' for GPU
+        WHISPER_MODEL_SIZE: 'base',
+        WHISPER_DEVICE: 'cpu',
+        WHISPER_COMPUTE_TYPE: 'int8'
       }
     });
     
@@ -142,7 +147,7 @@ function transcribeAudio(audioPath: string): Promise<TranscriptionResult> {
       reject(new Error(`Failed to start transcription: ${error.message}`));
     });
     
-    // Set a timeout for the transcription process (5 minutes)
+    // Timeout after 5 minutes
     setTimeout(() => {
       pythonProcess.kill();
       reject(new Error('Transcription timed out after 5 minutes'));
@@ -160,7 +165,6 @@ async function createNote(
   const audioBasename = path.basename(audioPath);
   const imageBasenames = imagePaths.map(p => path.basename(p));
   
-  // Generate a simple summary (you can enhance this with AI later)
   const summary = transcriptionResult.text && transcriptionResult.text.length > 100
     ? `${transcriptionResult.text.substring(0, 100)}...`
     : transcriptionResult.text || 'Audio note recorded';
@@ -182,6 +186,90 @@ async function createNote(
   };
   
   return note;
+}
+
+// ➤ Helper: Generate a PDF report for the note
+function generatePdfReport(note: Note, projectName: string, fullImagePaths: string[]): Promise<string> {
+  return new Promise((resolve, reject) => {
+    // The PDF filename will be <noteId>.pdf
+    const pdfFilename = `${note.id}.pdf`;
+    const pdfPath = path.join(reportsDir, pdfFilename);
+    
+    const doc = new PDFDocument({ autoFirstPage: true });
+    const writeStream = fs.createWriteStream(pdfPath);
+    doc.pipe(writeStream);
+    
+    // Add title
+    doc.fontSize(18).text(`Project: ${projectName}`, { underline: true });
+    doc.moveDown(0.5);
+    
+    // Note metadata
+    doc.fontSize(12).text(`Note ID: ${note.id}`);
+    doc.text(`Timestamp: ${note.timestamp}`);
+    doc.moveDown(0.5);
+    
+    // Transcription text
+    doc.fontSize(14).text('Transcription:', { underline: true });
+    doc.moveDown(0.25);
+    doc.fontSize(12).text(note.transcription || '— no transcription —');
+    doc.moveDown(0.5);
+    
+    // Summary
+    doc.fontSize(14).text('Summary:', { underline: true });
+    doc.moveDown(0.25);
+    doc.fontSize(12).text(note.summary || '— no summary —');
+    doc.moveDown(0.5);
+    
+    // Insights
+    if (note.insights && note.insights.length > 0) {
+      doc.fontSize(14).text('Insights:', { underline: true });
+      note.insights.forEach(insight => {
+        doc.fontSize(12).text(`• ${insight}`);
+      });
+      doc.moveDown(0.5);
+    }
+    
+    // Images (if any)
+    if (fullImagePaths.length > 0) {
+      doc.addPage(); // put images on a new page
+      doc.fontSize(14).text('Attached Images:', { underline: true });
+      doc.moveDown(0.5);
+      
+      // For each image, embed at most two per page (scaled down)
+      const maxWidth = 250;
+      const maxHeight = 250;
+      let x = doc.page.margins.left;
+      let y = doc.y;
+      fullImagePaths.forEach((imgPath, idx) => {
+        try {
+          doc.image(imgPath, x, y, { fit: [maxWidth, maxHeight] });
+        } catch (e) {
+          // If embedding fails, just skip that image
+          console.warn(`Failed to embed image ${imgPath}:`, e);
+        }
+        x += maxWidth + 20;
+        // Move to next row after two images
+        if ((idx + 1) % 2 === 0) {
+          x = doc.page.margins.left;
+          y += maxHeight + 20;
+          // If we're too far down, add another page
+          if (y + maxHeight > doc.page.height - doc.page.margins.bottom) {
+            doc.addPage();
+            y = doc.page.margins.top;
+          }
+        }
+      });
+    }
+    
+    doc.end();
+    
+    writeStream.on('finish', () => {
+      resolve(`/reports/${pdfFilename}`); // Return the public URL path
+    });
+    writeStream.on('error', (err) => {
+      reject(err);
+    });
+  });
 }
 
 // POST handler for file uploads
@@ -263,9 +351,24 @@ handler.post(async (req: ExtendedNextApiRequest, res: NextApiResponse<UploadResp
     }
     
     console.log('Note created successfully:', note.id);
+
+    // ➤ Generate a PDF report now that the note exists
+    // Convert image file paths to absolute paths:
+    const fullImagePaths = imageFiles.map(f => path.resolve(f.path));
+    let reportUrl = '';
+    try {
+      reportUrl = await generatePdfReport(note, project.name, fullImagePaths);
+      console.log('PDF report generated at:', reportUrl);
+    } catch (pdfErr) {
+      console.error('Failed to generate PDF report:', pdfErr);
+      // We’ll still return ok: true, but include an error field for the PDF
+    }
+
+    // Respond with the created note and (if successful) PDF URL
     res.status(200).json({ 
       ok: true, 
-      note 
+      note,
+      reportUrl // e.g. "/reports/1234567890.pdf"
     });
     
   } catch (error) { 

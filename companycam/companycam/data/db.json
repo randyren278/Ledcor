@@ -1,0 +1,56 @@
+{
+  "projects": {
+    "mbgc0fqidx8r0": {
+      "id": "mbgc0fqidx8r0",
+      "name": "Demo Project",
+      "description": "Sample project for testing",
+      "notes": [
+        {
+          "id": "mbgc0fqi9oo3r",
+          "timestamp": "2025-06-03T09:44:10.410Z",
+          "text": "This is a demo note to show how the application works.",
+          "summary": "Demo note showing application functionality",
+          "transcription": "This is a demo note to show how the application works.",
+          "language": "en",
+          "duration": 15
+        }
+      ],
+      "createdAt": "2025-06-03T09:44:10.410Z",
+      "lastActivity": "2025-06-03T09:44:10.410Z"
+    },
+    "mbgc0fqifuc52": {
+      "id": "mbgc0fqifuc52",
+      "name": "Site A Inspection",
+      "description": "Construction site A progress tracking",
+      "notes": [],
+      "createdAt": "2025-06-03T09:44:10.410Z",
+      "lastActivity": "2025-06-03T09:44:10.410Z"
+    },
+    "mbgc0fqip7jy4": {
+      "id": "mbgc0fqip7jy4",
+      "name": "Site B Review",
+      "description": "Quality control for site B",
+      "notes": [
+        {
+          "id": "1748944409871",
+          "timestamp": "2025-06-03T09:53:29.869Z",
+          "audio": "1748944401324_audio_1748944400752.webm",
+          "images": [
+            "1748944401356_photo_1748944399996.jpg"
+          ],
+          "transcription": "Hi, my name is Brandi Renn and I am studying electrical engineering at the University of British Columbia. It's June 3rd, 253 AM and I'm very tired so here's a report and hopefully disrupts it up for today.",
+          "language": "en",
+          "summary": "Hi, my name is Brandi Renn and I am studying electrical engineering at the University of British Col...",
+          "duration": 18,
+          "insights": [
+            "Duration: 18s",
+            "Language: en",
+            "Confidence: 99%"
+          ]
+        }
+      ],
+      "createdAt": "2025-06-03T09:44:10.410Z",
+      "lastActivity": "2025-06-03T09:53:29.871Z"
+    }
+  }
+}

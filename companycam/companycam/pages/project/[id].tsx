@@ -1,54 +1,73 @@
 // /pages/project/[id].tsx
-import { useState, useEffect } from 'react';
+
+import { useState } from 'react';
 import { useRouter } from 'next/router';
 import Link from 'next/link';
-import { ArrowLeft, Plus, Mic, Filter, Search, Grid, List, Calendar, Download, Share2, Settings, Edit3, Trash2 } from 'lucide-react';
-import { getProject, updateProject, deleteProject, getProjectStats } from '../../lib/data';
+import {
+  ArrowLeft,
+  Mic,
+  Search,
+  Grid,
+  List,
+  Settings,
+  Share2,
+  Download,
+  Trash2,
+} from 'lucide-react';
 import NoteCard from '../../components/NoteCard';
-import { Project, Note, ViewMode, SortBy, FilterBy } from '../../types';
+import { Project, Note, ViewMode, SortBy, FilterBy, Stats } from '../../types';
+import { GetServerSideProps, NextPage } from 'next';
+import { getProject, deleteProject, updateProject, getProjectStats } from '../../lib/data';
 
-export default function ProjectPage() {
+interface Props {
+  project: Project;
+  stats: Stats;
+}
+
+const ProjectPage: NextPage<Props> = ({ project: initialProject, stats: initialStats }) => {
   const router = useRouter();
-  const { id } = router.query;
-  
-  const [project, setProject] = useState<Project | null>(null);
-  const [loading, setLoading] = useState(true);
+  const { id } = router.query as { id: string };
+
+  const [project, setProject] = useState<Project>(initialProject);
+  const [stats, setStats] = useState<Stats>(initialStats);
+
   const [searchTerm, setSearchTerm] = useState('');
   const [sortBy, setSortBy] = useState<SortBy>('newest');
   const [viewMode, setViewMode] = useState<ViewMode>('grid');
   const [selectedFilter, setSelectedFilter] = useState<FilterBy>('all');
+
   const [showEditModal, setShowEditModal] = useState(false);
-  const [editName, setEditName] = useState('');
-  const [editDescription, setEditDescription] = useState('');
+  const [editName, setEditName] = useState(project.name);
+  const [editDescription, setEditDescription] = useState(project.description || '');
   const [isEditing, setIsEditing] = useState(false);
 
-  // Load project data
-  useEffect(() => {
-    if (typeof id === 'string') {
-      try {
-        const projectData = getProject(id);
-        setProject(projectData);
-        setEditName(projectData.name);
-        setEditDescription(projectData.description || '');
-      } catch (error) {
-        console.error('Error loading project:', error);
-        router.push('/');
-      } finally {
-        setLoading(false);
-      }
+  // Whenever we locally update or delete, re‐fetch stats / project details
+  const refreshProject = async () => {
+    const resp = await fetch(`/api/project/${project.id}`);
+    if (!resp.ok) {
+      router.push('/');
+      return;
     }
-  }, [id, router]);
+    const { project: fresh } = await resp.json();
+    setProject(fresh);
 
-  // Filter and sort notes
-  const filteredNotes = project?.notes
-    .filter(note => {
-      // Text search
-      const searchMatch = !searchTerm || 
+    // also fetch stats via a new endpoint or inline; here we reuse getProjectStats on the server:
+    const statsResp = await fetch(`/api/project/${project.id}/stats`);
+    if (statsResp.ok) {
+      const { stats: freshStats } = await statsResp.json();
+      setStats(freshStats);
+    }
+  };
+
+  // Filter + sort notes client‐side
+  const filteredNotes: Note[] = (project.notes || [])
+    .filter((note) => {
+      const searchMatch =
+        !searchTerm ||
         (note.summary?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-         note.transcription?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-         note.text?.toLowerCase().includes(searchTerm.toLowerCase()));
+          note.transcription?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+          note.text?.toLowerCase().includes(searchTerm.toLowerCase()));
 
-      // Filter by type
       let typeMatch = true;
       switch (selectedFilter) {
         case 'audio':
@@ -74,91 +93,55 @@ export default function ProjectPage() {
           const aText = a.summary || a.transcription || a.text || '';
           const bText = b.summary || b.transcription || b.text || '';
           return aText.localeCompare(bText);
-        default: // newest
+        default:
+          // newest
           return new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime();
       }
-    }) || [];
+    });
 
   const handleEditProject = async () => {
-    if (!project || !editName.trim()) return;
-    
+    if (!editName.trim()) return;
     setIsEditing(true);
     try {
-      const updatedProject = updateProject(project.id, {
-        name: editName.trim(),
-        description: editDescription.trim() || undefined
+      const resp = await fetch(`/api/project/${project.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: editName.trim(),
+          description: editDescription.trim() || undefined,
+        }),
       });
-      
-      if (updatedProject) {
-        setProject(updatedProject);
-        setShowEditModal(false);
-      }
-    } catch (error) {
-      console.error('Error updating project:', error);
+      if (!resp.ok) throw new Error('Failed to update');
+      await refreshProject();
+      setShowEditModal(false);
+    } catch (e) {
+      console.error(e);
     } finally {
       setIsEditing(false);
     }
   };
 
   const handleDeleteProject = async () => {
-    if (!project) return;
-    
-    const confirmed = window.confirm('Are you sure you want to delete this project? This cannot be undone.');
+    const confirmed = window.confirm(
+      'Are you sure you want to delete this project? This cannot be undone.'
+    );
     if (!confirmed) return;
-    
+
     try {
-      const deleted = deleteProject(project.id);
-      if (deleted) {
-        router.push('/');
-      }
-    } catch (error) {
-      console.error('Error deleting project:', error);
+      const resp = await fetch(`/api/project/${project.id}`, {
+        method: 'DELETE',
+      });
+      if (!resp.ok) throw new Error('Failed to delete');
+      router.push('/');
+    } catch (e) {
+      console.error(e);
     }
   };
 
   const handleNoteAction = (note: Note, action: 'expand' | 'share' | 'download') => {
-    switch (action) {
-      case 'expand':
-        // Handle note expansion
-        console.log('Expanding note:', note.id);
-        break;
-      case 'share':
-        // Handle note sharing
-        console.log('Sharing note:', note.id);
-        break;
-      case 'download':
-        // Handle note download
-        console.log('Downloading note:', note.id);
-        break;
-    }
+    // Stub for future functionality
+    console.log(`${action} note:`, note.id);
   };
-
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="text-center">
-          <div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-          <p className="text-gray-600">Loading project...</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (!project) {
-    return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="text-center">
-          <h1 className="text-2xl font-bold text-gray-900 mb-2">Project not found</h1>
-          <p className="text-gray-600 mb-4">The project you're looking for doesn't exist.</p>
-          <Link href="/" className="text-blue-600 hover:text-blue-700">
-            ← Back to projects
-          </Link>
-        </div>
-      </div>
-    );
-  }
-
-  const stats = getProjectStats(project.id);
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -181,7 +164,7 @@ export default function ProjectPage() {
                 </p>
               </div>
             </div>
-            
+
             <div className="flex items-center space-x-3">
               <button
                 onClick={() => setShowEditModal(true)}
@@ -189,15 +172,15 @@ export default function ProjectPage() {
               >
                 <Settings className="w-5 h-5" />
               </button>
-              
+
               <button className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors">
                 <Share2 className="w-5 h-5" />
               </button>
-              
+
               <button className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors">
                 <Download className="w-5 h-5" />
               </button>
-              
+
               <Link
                 href={`/project/${project.id}/create`}
                 className="flex items-center space-x-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-colors duration-200 shadow-sm hover:shadow-md"
@@ -276,13 +259,17 @@ export default function ProjectPage() {
               <div className="flex items-center border border-gray-300 rounded-lg">
                 <button
                   onClick={() => setViewMode('grid')}
-                  className={`p-2 ${viewMode === 'grid' ? 'bg-blue-100 text-blue-600' : 'text-gray-400 hover:text-gray-600'}`}
+                  className={`p-2 ${
+                    viewMode === 'grid' ? 'bg-blue-100 text-blue-600' : 'text-gray-400 hover:text-gray-600'
+                  }`}
                 >
                   <Grid className="w-4 h-4" />
                 </button>
                 <button
                   onClick={() => setViewMode('list')}
-                  className={`p-2 ${viewMode === 'list' ? 'bg-blue-100 text-blue-600' : 'text-gray-400 hover:text-gray-600'}`}
+                  className={`p-2 ${
+                    viewMode === 'list' ? 'bg-blue-100 text-blue-600' : 'text-gray-400 hover:text-gray-600'
+                  }`}
                 >
                   <List className="w-4 h-4" />
                 </button>
@@ -293,17 +280,20 @@ export default function ProjectPage() {
 
         {/* Notes Grid/List */}
         {filteredNotes.length > 0 ? (
-          <div className={viewMode === 'grid' 
-            ? 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6' 
-            : 'space-y-4'
-          }>
+          <div
+            className={
+              viewMode === 'grid'
+                ? 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6'
+                : 'space-y-4'
+            }
+          >
             {filteredNotes.map((note) => (
-              <NoteCard 
-                key={note.id} 
+              <NoteCard
+                key={note.id}
                 note={note}
-                onExpand={(note) => handleNoteAction(note, 'expand')}
-                onShare={(note) => handleNoteAction(note, 'share')}
-                onDownload={(note) => handleNoteAction(note, 'download')}
+                onExpand={(n) => handleNoteAction(n, 'expand')}
+                onShare={(n) => handleNoteAction(n, 'share')}
+                onDownload={(n) => handleNoteAction(n, 'download')}
               />
             ))}
           </div>
@@ -322,8 +312,7 @@ export default function ProjectPage() {
             <p className="text-gray-500 mb-6 max-w-md mx-auto">
               {searchTerm || selectedFilter !== 'all'
                 ? 'Try adjusting your search or filter criteria.'
-                : 'Start recording your first note to get started.'
-              }
+                : 'Start recording your first note to get started.'}
             </p>
             {!(searchTerm || selectedFilter !== 'all') && (
               <Link
@@ -343,7 +332,7 @@ export default function ProjectPage() {
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6">
             <h3 className="text-xl font-bold text-gray-900 mb-4">Edit Project</h3>
-            
+
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -356,7 +345,7 @@ export default function ProjectPage() {
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
               </div>
-              
+
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Description
@@ -369,7 +358,7 @@ export default function ProjectPage() {
                 />
               </div>
             </div>
-            
+
             <div className="flex items-center space-x-3 mt-6">
               <button
                 onClick={handleEditProject}
@@ -396,4 +385,34 @@ export default function ProjectPage() {
       )}
     </div>
   );
-}
+};
+
+// ─── Fetch data server‐side ─────────────────────────────────────────────────────
+export const getServerSideProps: GetServerSideProps = async (context) => {
+  const { id } = context.params as { id: string };
+  const project = getProject(id);
+
+  if (!project) {
+    return {
+      notFound: true,
+    };
+  }
+
+  const stats = getProjectStats(id) || {
+    totalNotes: 0,
+    audioNotes: 0,
+    imageNotes: 0,
+    transcribedNotes: 0,
+    totalWords: 0,
+    totalDuration: 0,
+  };
+
+  return {
+    props: {
+      project,
+      stats,
+    },
+  };
+};
+
+export default ProjectPage;

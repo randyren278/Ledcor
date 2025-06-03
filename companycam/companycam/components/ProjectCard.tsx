@@ -58,7 +58,7 @@ export default function ProjectCard({ project, onClick, colorClass }: ProjectCar
     if (diffHours < 24) return `${diffHours}h ago`;
     if (diffDays < 7) return `${diffDays}d ago`;
     if (diffDays < 30) return `${Math.floor(diffDays / 7)}w ago`;
-    return date.toLocaleDateString();
+    return date.toLocaleDateString('en-US');
   };
 
   return (
@@ -134,7 +134,7 @@ export default function ProjectCard({ project, onClick, colorClass }: ProjectCar
                       <div className="flex items-center space-x-1">
                         <Clock className="w-3 h-3 text-gray-400" />
                         <span className="text-xs text-gray-500">
-                          {new Date(note.timestamp).toLocaleDateString()}
+                          {new Date(note.timestamp).toLocaleDateString('en-US')}
                         </span>
                       </div>
                       

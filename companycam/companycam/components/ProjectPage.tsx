@@ -33,7 +33,7 @@ interface ProjectPageProps {
 const NoteCard = ({ note }: { note: Note }) => (
   <div className="bg-white rounded-lg shadow-sm border p-4">
     <p className="text-sm text-gray-500 mb-2">
-      {new Date(note.timestamp).toLocaleString()}
+      {new Date(note.timestamp).toLocaleString('en-US')}
     </p>
     <p className="text-gray-900">
       {note.summary || note.transcription || note.text || 'No content'}
