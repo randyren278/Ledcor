@@ -23,10 +23,12 @@ export interface Note {
     color?: string;
   }
   
-  export interface MediaData {
-    audio: File;
-    images: File[];
-  }
+export interface MediaData {
+  audio: File;
+  images: File[];
+  transcription: string;
+  duration: number;
+}
 
   export interface Stats {
     totalNotes: number;

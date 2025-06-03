@@ -4,6 +4,8 @@ import { ArrowLeft, Loader2, CheckCircle, AlertCircle, Upload, Brain, FileText }
 interface MediaData {
   audio: File;
   images: File[];
+  transcription: string;
+  duration: number;
 }
 
 interface CreateNotePageProps {
@@ -26,7 +28,9 @@ const CameraRecorder = ({ onFinish }: { onFinish: (data: MediaData) => void }) =
     <button
       onClick={() => onFinish({
         audio: new File([], 'test.webm'),
-        images: []
+        images: [],
+        transcription: '',
+        duration: 0
       })}
       className="bg-blue-500 px-4 py-2 rounded-lg"
     >
@@ -55,7 +59,7 @@ export default function CreateNotePage({ projectId, projectName, onBack, onCompl
     }
   }, [status]);
 
-  async function handleFinish({ audio, images }: MediaData) {
+  async function handleFinish({ audio, images, transcription, duration }: MediaData) {
     try {
       setStatus('uploading');
       setProgress(0);
@@ -65,6 +69,8 @@ export default function CreateNotePage({ projectId, projectName, onBack, onCompl
       const formData = new FormData();
       formData.append("projectId", projectId);
       formData.append("audio", audio);
+      formData.append("transcription", transcription);
+      formData.append("duration", String(duration));
       images.forEach((img) => formData.append("images", img));
 
       const uploadResponse = await fetch("/api/upload", { 

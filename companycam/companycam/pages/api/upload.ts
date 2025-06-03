@@ -5,7 +5,6 @@ import multer from 'multer';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { spawn } from 'child_process';
 import { getProject, addNoteToProject } from '../../lib/data';
 import { Note, TranscriptionResult, UploadResponse } from '../../types';
 import PDFDocument from 'pdfkit';
@@ -67,142 +66,6 @@ const handler = nextConnect<ExtendedNextApiRequest, NextApiResponse<UploadRespon
 handler.use(upload.fields([{ name: 'audio', maxCount: 1 }, { name: 'images', maxCount: 10 }]));
 
 // -------------- TRANSLATION / TRANSCRIPTION LOGIC --------------
-async function runPythonTranscribe(audioPath: string): Promise<TranscriptionResult> {
-  // We only call this in development:
-  return new Promise((resolve) => {
-    const scriptPath = path.join(process.cwd(), 'python', 'transcribe.py');
-    if (!fs.existsSync(scriptPath)) {
-      console.warn('Dev: transcribe.py missing → fallback');
-      return resolve({
-        success: true,
-        language: 'en',
-        language_probability: 0.95,
-        text: 'Audio note recorded – transcription script not available',
-        duration: 60
-      });
-    }
-    if (!fs.existsSync(audioPath)) {
-      return resolve({
-        success: false,
-        error: 'Audio file not found'
-      });
-    }
-
-    let stdout = '';
-    let stderr = '';
-    let didResolve = false;
-
-    let pyProc;
-    try {
-      pyProc = spawn('python3', [scriptPath, audioPath], {
-        env: {
-          ...process.env,
-          WHISPER_MODEL_SIZE: 'base',
-          WHISPER_DEVICE: 'cpu',
-          WHISPER_COMPUTE_TYPE: 'int8'
-        }
-      });
-    } catch (spawnErr) {
-      console.warn('Failed to spawn Python → fallback', spawnErr);
-      return resolve({
-        success: true,
-        language: 'en',
-        language_probability: 0.95,
-        text: 'Audio note recorded – Python failed to start',
-        duration: 60
-      });
-    }
-
-    pyProc.stdout.on('data', (data: Buffer) => {
-      stdout += data.toString();
-    });
-    pyProc.stderr.on('data', (data: Buffer) => {
-      stderr += data.toString();
-      console.log('Whisper stderr:', data.toString().trim());
-    });
-
-    pyProc.on('close', (code) => {
-      if (didResolve) return;
-      didResolve = true;
-      if (code === 0 && stdout.trim()) {
-        try {
-          const cleanOutput = stdout.trim();
-          const start = cleanOutput.indexOf('{');
-          const end = cleanOutput.lastIndexOf('}') + 1;
-          if (start < 0 || end < 0) throw new Error('No JSON found');
-          const jsonStr = cleanOutput.slice(start, end);
-          const result: TranscriptionResult = JSON.parse(jsonStr);
-          if (result.success && result.text) {
-            return resolve(result);
-          } else {
-            throw new Error(result.error || 'No text returned');
-          }
-        } catch (parseErr) {
-          console.warn('Parse error → fallback', parseErr, stdout);
-          return resolve({
-            success: true,
-            language: 'en',
-            language_probability: 0.95,
-            text: 'Audio note recorded – parse failed',
-            duration: 60
-          });
-        }
-      } else {
-        console.warn(`Python exited ${code} → fallback`, stderr);
-        return resolve({
-          success: true,
-          language: 'en',
-          language_probability: 0.95,
-          text: 'Audio note recorded – transcription process failed',
-          duration: 60
-        });
-      }
-    });
-
-    pyProc.on('error', (err) => {
-      if (didResolve) return;
-      didResolve = true;
-      console.warn('Python process error → fallback', err);
-      return resolve({
-        success: true,
-        language: 'en',
-        language_probability: 0.95,
-        text: 'Audio note recorded – process error',
-        duration: 60
-      });
-    });
-
-    // Timeout after 60s
-    setTimeout(() => {
-      if (didResolve) return;
-      didResolve = true;
-      if (pyProc) pyProc.kill();
-      console.warn('Transcription timed out → fallback');
-      return resolve({
-        success: true,
-        language: 'en',
-        language_probability: 0.95,
-        text: 'Audio note recorded – transcription timed out',
-        duration: 60
-      });
-    }, 60_000);
-  });
-}
-
-async function transcribeAudio(audioPath: string): Promise<TranscriptionResult> {
-  if (!isProd) {
-    // Dev → try real Python
-    return runPythonTranscribe(audioPath);
-  }
-  // Production (Vercel) → always fallback
-  return {
-    success: true,
-    language: 'en',
-    language_probability: 0.95,
-    text: `Audio note recorded on ${new Date().toLocaleDateString()}`,
-    duration: 60
-  };
-}
 
 // -------------- NOTE CREATION --------------
 async function createNote(
@@ -355,10 +218,15 @@ handler.post(async (req: ExtendedNextApiRequest, res) => {
       return res.status(500).json({ ok: false, error: 'Uploaded audio not found on disk' });
     }
 
-    // Transcribe (or fallback)
-    console.log('Starting transcription (dev? ' + (!isProd) + ')');
-    const transcriptionResult = await transcribeAudio(audioFile.path);
-    console.log('Transcription complete:', transcriptionResult);
+    const transcriptionText = typeof req.body.transcription === 'string' ? req.body.transcription : '';
+    const durationNum = req.body.duration ? parseFloat(req.body.duration) : undefined;
+    const transcriptionResult: TranscriptionResult = {
+      success: true,
+      language: 'en',
+      language_probability: 1,
+      text: transcriptionText,
+      duration: durationNum
+    };
 
     // Build Note
     const note = await createNote(
@@ -401,3 +269,4 @@ export const config = {
 };
 
 export default handler;
+

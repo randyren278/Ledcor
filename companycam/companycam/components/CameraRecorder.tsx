@@ -5,6 +5,8 @@ import { Camera, Mic, Square, Circle, Play } from "lucide-react";
 interface MediaData {
   audio: File;
   images: File[];
+  transcription: string;
+  duration: number;
 }
 
 interface CameraRecorderProps {
@@ -14,12 +16,14 @@ interface CameraRecorderProps {
 export default function CameraRecorder({ onFinish }: CameraRecorderProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const recognitionRef = useRef<any>(null);
   const chunksRef = useRef<Blob[]>([]);
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [countdown, setCountdown] = useState(-1);
   const [images, setImages] = useState<File[]>([]);
   const [recording, setRecording] = useState(false);
   const [duration, setDuration] = useState(0);
+  const [transcript, setTranscript] = useState('');
 
   useEffect(() => {
     let interval: NodeJS.Timeout;
@@ -78,15 +82,38 @@ export default function CameraRecorder({ onFinish }: CameraRecorderProps) {
 
   function beginRecord() {
     if (!stream) return;
-    
-    const rec = new MediaRecorder(stream, { 
-      mimeType: MediaRecorder.isTypeSupported('audio/webm;codecs=opus') 
-        ? 'audio/webm;codecs=opus' 
-        : 'audio/webm' 
+
+    const rec = new MediaRecorder(stream, {
+      mimeType: MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+        ? 'audio/webm;codecs=opus'
+        : 'audio/webm'
     });
-    
+
     mediaRecorderRef.current = rec;
     chunksRef.current = [];
+    setTranscript('');
+
+    // Start browser speech recognition if available
+    const SpeechRecognition =
+      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (SpeechRecognition) {
+      const recognition = new SpeechRecognition();
+      recognition.lang = 'en-US';
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.onresult = (event: SpeechRecognitionEvent) => {
+        let final = '';
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const res = event.results[i];
+          if (res.isFinal) final += res[0].transcript;
+        }
+        if (final) {
+          setTranscript((t) => (t + ' ' + final).trim());
+        }
+      };
+      recognitionRef.current = recognition;
+      recognition.start();
+    }
     
     rec.ondataavailable = (e) => {
       if (e.data.size > 0) {
@@ -121,16 +148,23 @@ export default function CameraRecorder({ onFinish }: CameraRecorderProps) {
   function endRecord() {
     const rec = mediaRecorderRef.current;
     if (!rec) return;
-    
+
+    const recognition = recognitionRef.current;
+    if (recognition) {
+      recognition.stop();
+      recognitionRef.current = null;
+    }
+
     rec.onstop = () => {
       const audioBlob = new Blob(chunksRef.current, { type: "audio/webm" });
       const audioFile = new File([audioBlob], `audio_${Date.now()}.webm`, { type: "audio/webm" });
-      onFinish({ audio: audioFile, images });
+      onFinish({ audio: audioFile, images, transcription: transcript, duration });
       setRecording(false);
       setImages([]);
       setDuration(0);
+      setTranscript('');
     };
-    
+
     rec.stop();
   }
 
