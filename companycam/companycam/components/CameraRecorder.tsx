@@ -101,7 +101,7 @@ export default function CameraRecorder({ onFinish }: CameraRecorderProps) {
       recognition.lang = 'en-US';
       recognition.continuous = true;
       recognition.interimResults = true;
-      recognition.onresult = (event: SpeechRecognitionEvent) => {
+      recognition.onresult = (event: any) => {
         let final = '';
         for (let i = event.resultIndex; i < event.results.length; i++) {
           const res = event.results[i];
