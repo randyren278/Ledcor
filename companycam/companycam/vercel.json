@@ -1,0 +1,18 @@
+{
+    "functions": {
+      "pages/api/upload.ts": {
+        "maxDuration": 60
+      },
+      "pages/api/**/*.ts": {
+        "maxDuration": 30
+      }
+    },
+    "env": {
+      "NODE_ENV": "production"
+    },
+    "build": {
+      "env": {
+        "VERCEL": "1"
+      }
+    }
+  }
