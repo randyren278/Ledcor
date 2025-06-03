@@ -22,9 +22,9 @@ interface ExtendedNextApiRequest extends NextApiRequest {
 const isProd = process.env.NODE_ENV === 'production';
 
 // Choose an upload folder that’s writable:
-const baseDir   = isProd ? os.tmpdir() : path.join(process.cwd(), 'public');
+const baseDir = isProd ? os.tmpdir() : path.join(process.cwd(), 'public');
 const uploadDir = path.join(baseDir, 'uploads');
-const reportsDir= path.join(baseDir, 'reports');
+const reportsDir = path.join(baseDir, 'reports');
 
 // Create the folders if they don’t exist yet
 if (!fs.existsSync(uploadDir)) {
@@ -126,10 +126,9 @@ async function runPythonTranscribe(audioPath: string): Promise<TranscriptionResu
       didResolve = true;
       if (code === 0 && stdout.trim()) {
         try {
-          // extract the JSON part from stdout
           const cleanOutput = stdout.trim();
           const start = cleanOutput.indexOf('{');
-          const end   = cleanOutput.lastIndexOf('}') + 1;
+          const end = cleanOutput.lastIndexOf('}') + 1;
           if (start < 0 || end < 0) throw new Error('No JSON found');
           const jsonStr = cleanOutput.slice(start, end);
           const result: TranscriptionResult = JSON.parse(jsonStr);
@@ -250,11 +249,10 @@ async function generatePdfReport(
   projectName: string,
   fullImagePaths: string[]
 ): Promise<string> {
-  // Instead of writing to public/reports, we write into /tmp/reports on Vercel
   return new Promise((resolve, reject) => {
     try {
       const pdfFilename = `${note.id}.pdf`;
-      const pdfPath     = path.join(reportsDir, pdfFilename);
+      const pdfPath = path.join(reportsDir, pdfFilename);
       const doc = new PDFDocument({ autoFirstPage: true });
       const writeStream = fs.createWriteStream(pdfPath);
       doc.pipe(writeStream);
@@ -322,7 +320,6 @@ async function generatePdfReport(
 
       doc.end();
       writeStream.on('finish', () => {
-        // Read PDF back as base64 so we can send it
         const buf = fs.readFileSync(pdfPath);
         const base64Pdf = buf.toString('base64');
         resolve(base64Pdf);
@@ -349,12 +346,11 @@ handler.post(async (req: ExtendedNextApiRequest, res) => {
     }
 
     const audioFile = req.files?.audio?.[0];
-    const imageFiles= req.files?.images || [];
+    const imageFiles = req.files?.images || [];
     if (!audioFile) {
       return res.status(400).json({ ok: false, error: 'Audio file is required' });
     }
 
-    // Ensure multer actually saved it
     if (!fs.existsSync(audioFile.path)) {
       return res.status(500).json({ ok: false, error: 'Uploaded audio not found on disk' });
     }
@@ -390,7 +386,7 @@ handler.post(async (req: ExtendedNextApiRequest, res) => {
     return res.status(200).json({
       ok: true,
       note,
-      pdfBase64  // client can do: window.open(`data:application/pdf;base64,${pdfBase64}`)
+      pdfBase64
     });
   } catch (err) {
     console.error('Handler error:', err);
