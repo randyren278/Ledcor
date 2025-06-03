@@ -16,6 +16,10 @@ interface ExtendedNextApiRequest extends NextApiRequest {
     audio?: Express.Multer.File[];
     images?: Express.Multer.File[];
   };
+  body: {
+    projectId: string;
+    clientTranscription?: string;
+  };
 }
 
 // Are we in production on Vercel?
@@ -189,12 +193,24 @@ async function runPythonTranscribe(audioPath: string): Promise<TranscriptionResu
   });
 }
 
-async function transcribeAudio(audioPath: string): Promise<TranscriptionResult> {
+async function transcribeAudio(audioPath: string, clientTranscription?: string): Promise<TranscriptionResult> {
+  // If client provided transcription, use it
+  if (clientTranscription) {
+    console.log('Using client-side transcription');
+    return {
+      success: true,
+      language: 'en',
+      language_probability: 0.95,
+      text: clientTranscription,
+      duration: 60 // You could calculate this client-side if needed
+    };
+  }
+
   if (!isProd) {
     // Dev → try real Python
     return runPythonTranscribe(audioPath);
   }
-  // Production (Vercel) → always fallback
+  // Production (Vercel) → fallback
   return {
     success: true,
     language: 'en',
@@ -334,7 +350,7 @@ async function generatePdfReport(
 // -------------- THE POST HANDLER --------------
 handler.post(async (req: ExtendedNextApiRequest, res) => {
   console.log('Upload request (prod? ' + isProd + ')');
-  const { projectId } = req.body;
+  const { projectId, clientTranscription } = req.body;
   if (!projectId || typeof projectId !== 'string') {
     return res.status(400).json({ ok: false, error: 'Project ID is required' });
   }
@@ -355,9 +371,9 @@ handler.post(async (req: ExtendedNextApiRequest, res) => {
       return res.status(500).json({ ok: false, error: 'Uploaded audio not found on disk' });
     }
 
-    // Transcribe (or fallback)
-    console.log('Starting transcription (dev? ' + (!isProd) + ')');
-    const transcriptionResult = await transcribeAudio(audioFile.path);
+    // Transcribe (or use client transcription)
+    console.log('Starting transcription (client provided: ' + !!clientTranscription + ')');
+    const transcriptionResult = await transcribeAudio(audioFile.path, clientTranscription);
     console.log('Transcription complete:', transcriptionResult);
 
     // Build Note

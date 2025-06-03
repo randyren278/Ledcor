@@ -304,6 +304,12 @@ export default function NoteCard({ note, onExpand, onShare }: NoteCardProps) {
                 <span>Transcribed</span>
               </div>
             )}
+            {note.insights && note.insights.some(i => i.includes('client-side')) && (
+              <div className="flex items-center space-x-1">
+                <span>🌐</span>
+                <span>Client transcribed</span>
+              </div>
+            )}
           </div>
 
           {displayText.length > 0 && (

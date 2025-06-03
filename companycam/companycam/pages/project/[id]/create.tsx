@@ -49,9 +49,11 @@ const CreateNote: NextPage<Props> = ({ project }) => {
   const handleFinish = async ({
     audio,
     images,
+    transcription,
   }: {
     audio: File;
     images: File[];
+    transcription?: string;
   }) => {
     setStatus('uploading');
     setProgress(0);
@@ -62,6 +64,11 @@ const CreateNote: NextPage<Props> = ({ project }) => {
       formData.append('projectId', project.id);
       formData.append('audio', audio);
       images.forEach((img) => formData.append('images', img));
+
+      // Include transcription if available
+      if (transcription) {
+        formData.append('clientTranscription', transcription);
+      }
 
       setProcessingStep('Uploading files...');
       const uploadResponse = await fetch('/api/upload', {

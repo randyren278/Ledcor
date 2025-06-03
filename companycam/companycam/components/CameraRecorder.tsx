@@ -1,10 +1,10 @@
-// /components/CameraRecorder.tsx
 import { useEffect, useRef, useState } from "react";
-import { Camera, Mic, Square, Circle, Play } from "lucide-react";
+import { Camera, Mic, Square, Circle, Play, AlertCircle } from "lucide-react";
 
 interface MediaData {
   audio: File;
   images: File[];
+  transcription?: string; // Added transcription
 }
 
 interface CameraRecorderProps {
@@ -20,6 +20,13 @@ export default function CameraRecorder({ onFinish }: CameraRecorderProps) {
   const [images, setImages] = useState<File[]>([]);
   const [recording, setRecording] = useState(false);
   const [duration, setDuration] = useState(0);
+  
+  // Speech recognition state
+  const [transcript, setTranscript] = useState("");
+  const [finalTranscript, setFinalTranscript] = useState("");
+  const [isTranscribing, setIsTranscribing] = useState(false);
+  const [speechRecognitionSupported, setSpeechRecognitionSupported] = useState(true);
+  const recognitionRef = useRef<any>(null);
 
   useEffect(() => {
     let interval: NodeJS.Timeout;
@@ -29,6 +36,92 @@ export default function CameraRecorder({ onFinish }: CameraRecorderProps) {
       }, 1000);
     }
     return () => clearInterval(interval);
+  }, [recording]);
+
+  // Initialize speech recognition
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+      
+      if (SpeechRecognition) {
+        const recognition = new SpeechRecognition();
+        recognition.continuous = true;
+        recognition.interimResults = true;
+        recognition.lang = 'en-US';
+        recognition.maxAlternatives = 1;
+
+        recognition.onstart = () => {
+          console.log('Speech recognition started');
+          setIsTranscribing(true);
+        };
+
+        recognition.onresult = (event: any) => {
+          let interimTranscript = '';
+          let finalTranscript = '';
+
+          for (let i = event.resultIndex; i < event.results.length; i++) {
+            const transcript = event.results[i][0].transcript;
+            if (event.results[i].isFinal) {
+              finalTranscript += transcript + ' ';
+            } else {
+              interimTranscript += transcript;
+            }
+          }
+
+          if (finalTranscript) {
+            setFinalTranscript(prev => prev + finalTranscript);
+          }
+          setTranscript(interimTranscript);
+        };
+
+        recognition.onerror = (event: any) => {
+          console.error('Speech recognition error:', event.error);
+          if (event.error === 'no-speech') {
+            // Restart recognition if no speech detected
+            try {
+              recognition.stop();
+              setTimeout(() => {
+                if (recording && recognitionRef.current) {
+                  recognition.start();
+                }
+              }, 100);
+            } catch (e) {
+              console.error('Error restarting recognition:', e);
+            }
+          } else {
+            setIsTranscribing(false);
+          }
+        };
+
+        recognition.onend = () => {
+          console.log('Speech recognition ended');
+          setIsTranscribing(false);
+          // Restart if still recording
+          if (recording && recognitionRef.current) {
+            try {
+              recognition.start();
+            } catch (e) {
+              console.error('Error restarting recognition:', e);
+            }
+          }
+        };
+
+        recognitionRef.current = recognition;
+      } else {
+        console.warn('Speech recognition not supported');
+        setSpeechRecognitionSupported(false);
+      }
+    }
+
+    return () => {
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.stop();
+        } catch (e) {
+          // Ignore errors on cleanup
+        }
+      }
+    };
   }, [recording]);
 
   useEffect(() => {
@@ -97,6 +190,17 @@ export default function CameraRecorder({ onFinish }: CameraRecorderProps) {
     rec.start();
     setRecording(true);
     setDuration(0);
+    setTranscript("");
+    setFinalTranscript("");
+    
+    // Start speech recognition
+    if (recognitionRef.current && speechRecognitionSupported) {
+      try {
+        recognitionRef.current.start();
+      } catch (e) {
+        console.error('Error starting speech recognition:', e);
+      }
+    }
   }
 
   function takePhoto() {
@@ -122,13 +226,33 @@ export default function CameraRecorder({ onFinish }: CameraRecorderProps) {
     const rec = mediaRecorderRef.current;
     if (!rec) return;
     
+    // Stop speech recognition
+    if (recognitionRef.current && isTranscribing) {
+      try {
+        recognitionRef.current.stop();
+      } catch (e) {
+        console.error('Error stopping recognition:', e);
+      }
+    }
+    
     rec.onstop = () => {
       const audioBlob = new Blob(chunksRef.current, { type: "audio/webm" });
       const audioFile = new File([audioBlob], `audio_${Date.now()}.webm`, { type: "audio/webm" });
-      onFinish({ audio: audioFile, images });
+      
+      // Combine final transcript with any remaining interim transcript
+      const completeTranscript = finalTranscript + (transcript ? ' ' + transcript : '');
+      
+      onFinish({ 
+        audio: audioFile, 
+        images,
+        transcription: completeTranscript.trim() || undefined
+      });
+      
       setRecording(false);
       setImages([]);
       setDuration(0);
+      setTranscript("");
+      setFinalTranscript("");
     };
     
     rec.stop();
@@ -170,13 +294,48 @@ export default function CameraRecorder({ onFinish }: CameraRecorderProps) {
           </div>
         )}
         
+        {/* Transcription Status */}
+        {recording && (
+          <div className="absolute top-4 right-4 flex items-center space-x-2">
+            {speechRecognitionSupported ? (
+              isTranscribing ? (
+                <div className="bg-green-600 text-white px-3 py-2 rounded-full flex items-center space-x-2">
+                  <div className="w-2 h-2 bg-white rounded-full animate-pulse"></div>
+                  <span className="text-sm font-semibold">Transcribing</span>
+                </div>
+              ) : (
+                <div className="bg-yellow-600 text-white px-3 py-2 rounded-full flex items-center space-x-2">
+                  <AlertCircle className="w-4 h-4" />
+                  <span className="text-sm font-semibold">Audio Only</span>
+                </div>
+              )
+            ) : (
+              <div className="bg-gray-600 text-white px-3 py-2 rounded-full flex items-center space-x-2">
+                <AlertCircle className="w-4 h-4" />
+                <span className="text-sm font-semibold">No Transcription</span>
+              </div>
+            )}
+          </div>
+        )}
+        
         {/* Photo Count */}
         {images.length > 0 && (
-          <div className="absolute top-4 right-4 bg-blue-600 text-white px-3 py-2 rounded-full">
+          <div className="absolute top-16 right-4 bg-blue-600 text-white px-3 py-2 rounded-full">
             <span className="text-sm font-semibold">{images.length} photo{images.length !== 1 ? 's' : ''}</span>
           </div>
         )}
       </div>
+      
+      {/* Live Transcription Display */}
+      {recording && speechRecognitionSupported && (finalTranscript || transcript) && (
+        <div className="bg-gray-800 p-4 max-h-32 overflow-y-auto">
+          <p className="text-sm text-gray-400 mb-1">Live Transcription:</p>
+          <p className="text-sm text-white">
+            {finalTranscript}
+            <span className="text-gray-400">{transcript}</span>
+          </p>
+        </div>
+      )}
       
       {/* Controls */}
       <div className="bg-gray-900 p-6">
@@ -191,7 +350,6 @@ export default function CameraRecorder({ onFinish }: CameraRecorderProps) {
           </div>
         ) : (
           <div className="flex items-center justify-between">
-            {/* Photo Button */}
             <button
               onClick={takePhoto}
               className="flex items-center justify-center w-16 h-16 bg-blue-500 hover:bg-blue-600 rounded-full transition-all duration-200 transform hover:scale-105 active:scale-95 shadow-lg"
@@ -199,7 +357,6 @@ export default function CameraRecorder({ onFinish }: CameraRecorderProps) {
               <Camera className="w-6 h-6 text-white" />
             </button>
             
-            {/* Stop Button */}
             <button
               onClick={endRecord}
               className="flex items-center justify-center w-20 h-20 bg-red-500 hover:bg-red-600 rounded-full transition-all duration-200 transform hover:scale-105 active:scale-95 shadow-lg"
@@ -207,7 +364,6 @@ export default function CameraRecorder({ onFinish }: CameraRecorderProps) {
               <Square className="w-8 h-8 text-white" />
             </button>
             
-            {/* Mic Indicator */}
             <div className="flex items-center justify-center w-16 h-16 bg-gray-700 rounded-full">
               <Mic className="w-6 h-6 text-green-400" />
             </div>
@@ -227,6 +383,16 @@ export default function CameraRecorder({ onFinish }: CameraRecorderProps) {
           </div>
         </div>
       )}
+      
+      {/* Speech Recognition Warning */}
+      {!speechRecognitionSupported && (
+        <div className="bg-yellow-900 p-3">
+          <p className="text-xs text-yellow-200 text-center">
+            Your browser doesn't support speech recognition. Audio will be recorded without transcription.
+          </p>
+        </div>
+      )}
     </div>
   );
 }
+
