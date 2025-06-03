@@ -17,7 +17,7 @@ import {
 import NoteCard from '../../components/NoteCard';
 import { Project, Note, ViewMode, SortBy, FilterBy, Stats } from '../../types';
 import { GetServerSideProps, NextPage } from 'next';
-import { getProject, deleteProject, updateProject, getProjectStats } from '../../lib/data';
+import { getProject, getProjectStats } from '../../lib/data';
 
 interface Props {
   project: Project;
@@ -41,25 +41,7 @@ const ProjectPage: NextPage<Props> = ({ project: initialProject, stats: initialS
   const [editDescription, setEditDescription] = useState(project.description || '');
   const [isEditing, setIsEditing] = useState(false);
 
-  // Whenever we locally update or delete, re‐fetch stats / project details
-  const refreshProject = async () => {
-    const resp = await fetch(`/api/project/${project.id}`);
-    if (!resp.ok) {
-      router.push('/');
-      return;
-    }
-    const { project: fresh } = await resp.json();
-    setProject(fresh);
-
-    // also fetch stats via a new endpoint or inline; here we reuse getProjectStats on the server:
-    const statsResp = await fetch(`/api/project/${project.id}/stats`);
-    if (statsResp.ok) {
-      const { stats: freshStats } = await statsResp.json();
-      setStats(freshStats);
-    }
-  };
-
-  // Filter + sort notes client‐side
+  // Filter + sort notes client‐side - moved this right after state declarations
   const filteredNotes: Note[] = (project.notes || [])
     .filter((note) => {
       const searchMatch =
@@ -98,6 +80,28 @@ const ProjectPage: NextPage<Props> = ({ project: initialProject, stats: initialS
           return new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime();
       }
     });
+
+  // Refresh project data
+  const refreshProject = async () => {
+    try {
+      const resp = await fetch(`/api/project/${project.id}`);
+      if (!resp.ok) {
+        router.push('/');
+        return;
+      }
+      const { project: fresh } = await resp.json();
+      setProject(fresh);
+
+      // Fetch updated stats
+      const statsResp = await fetch(`/api/project/${project.id}/stats`);
+      if (statsResp.ok) {
+        const { stats: freshStats } = await statsResp.json();
+        setStats(freshStats);
+      }
+    } catch (error) {
+      console.error('Error refreshing project:', error);
+    }
+  };
 
   const handleEditProject = async () => {
     if (!editName.trim()) return;
@@ -287,13 +291,13 @@ const ProjectPage: NextPage<Props> = ({ project: initialProject, stats: initialS
                 : 'space-y-4'
             }
           >
-            {filteredNotes.map((note) => (
+            {filteredNotes.map((note: Note) => (
               <NoteCard
                 key={note.id}
                 note={note}
-                onExpand={(n) => handleNoteAction(n, 'expand')}
-                onShare={(n) => handleNoteAction(n, 'share')}
-                onDownload={(n) => handleNoteAction(n, 'download')}
+                onExpand={(n: Note) => handleNoteAction(n, 'expand')}
+                onShare={(n: Note) => handleNoteAction(n, 'share')}
+                onDownload={(n: Note) => handleNoteAction(n, 'download')}
               />
             ))}
           </div>
@@ -387,32 +391,41 @@ const ProjectPage: NextPage<Props> = ({ project: initialProject, stats: initialS
   );
 };
 
-// ─── Fetch data server‐side ─────────────────────────────────────────────────────
+// ─── Fixed getServerSideProps to use direct function calls ─────────────────────────────
 export const getServerSideProps: GetServerSideProps = async (context) => {
-  const { id } = context.params as { id: string };
-  const project = getProject(id);
+  try {
+    const { id } = context.params as { id: string };
+    
+    // Use direct function calls instead of HTTP requests
+    const project = getProject(id);
 
-  if (!project) {
+    if (!project) {
+      return {
+        notFound: true,
+      };
+    }
+
+    const stats = getProjectStats(id) || {
+      totalNotes: 0,
+      audioNotes: 0,
+      imageNotes: 0,
+      transcribedNotes: 0,
+      totalWords: 0,
+      totalDuration: 0,
+    };
+
+    return {
+      props: {
+        project,
+        stats,
+      },
+    };
+  } catch (error) {
+    console.error('Error in getServerSideProps:', error);
     return {
       notFound: true,
     };
   }
-
-  const stats = getProjectStats(id) || {
-    totalNotes: 0,
-    audioNotes: 0,
-    imageNotes: 0,
-    transcribedNotes: 0,
-    totalWords: 0,
-    totalDuration: 0,
-  };
-
-  return {
-    props: {
-      project,
-      stats,
-    },
-  };
 };
 
 export default ProjectPage;

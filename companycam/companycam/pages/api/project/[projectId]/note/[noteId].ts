@@ -1,6 +1,6 @@
 // /pages/api/project/[projectId]/note/[noteId].ts
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { removeNoteFromProject, getProject } from '../../../../lib/data';
+import { removeNoteFromProject, getProject } from '../../../../../lib/data';
 
 type Data =
   | { success: true }

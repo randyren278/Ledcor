@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/router';
 import { Plus, Mic, Camera, Sparkles, Search } from 'lucide-react';
 import ProjectCard from '../components/ProjectCard';
+import { getAllProjects, getGlobalStats } from '../lib/data';
 import type { Project } from '../types';
 import type { GetServerSideProps, NextPage } from 'next';
 
@@ -30,7 +31,6 @@ const Home: NextPage<HomeProps> = ({ projects: initialProjects, stats: initialSt
 
   const [projects, setProjects] = useState<Project[]>(initialProjects);
   const [stats, setStats] = useState(initialStats);
-
   const [searchTerm, setSearchTerm] = useState('');
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newProjectName, setNewProjectName] = useState('');
@@ -57,13 +57,11 @@ const Home: NextPage<HomeProps> = ({ projects: initialProjects, stats: initialSt
       });
 
       if (!resp.ok) {
-        console.error('Failed to create project', await resp.text());
-        setIsCreating(false);
+        console.error('Failed to create project');
         return;
       }
 
-      const { project: created } = (await resp.json()) as { project: Project };
-      // Update UI list
+      const { project: created } = await resp.json();
       setProjects((prev) => [...prev, created]);
       setStats((prev) => ({
         ...prev,
@@ -74,7 +72,6 @@ const Home: NextPage<HomeProps> = ({ projects: initialProjects, stats: initialSt
       setNewProjectName('');
       setNewProjectDescription('');
 
-      // Navigate to the newly created project
       router.push(`/project/${created.id}`);
     } catch (error) {
       console.error('Error creating project:', error);
@@ -118,7 +115,6 @@ const Home: NextPage<HomeProps> = ({ projects: initialProjects, stats: initialSt
                 />
               </div>
 
-              {/* “New Project” button triggers modal */}
               <button
                 onClick={() => setShowCreateModal(true)}
                 className="flex items-center space-x-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-colors duration-200 shadow-sm hover:shadow-md"
@@ -303,23 +299,38 @@ const Home: NextPage<HomeProps> = ({ projects: initialProjects, stats: initialSt
   );
 };
 
-// ─── “getServerSideProps” to fetch projects + stats on the server ───────────────
 export const getServerSideProps: GetServerSideProps<HomeProps> = async () => {
-  // Server-side only: can safely call fs-based functions
-  const resp = await fetch(`http://localhost:${process.env.PORT || 3000}/api/projects`);
-  // Note: in production, use absolute URL or Next.js environment variables:
-  // e.g. `${process.env.NEXT_PUBLIC_BASE_URL}/api/projects`
-  const { projects, stats } = (await resp.json()) as {
-    projects: Project[];
-    stats: HomeProps['stats'];
-  };
+  try {
+    const projects = getAllProjects();
+    const globalStats = getGlobalStats();
+    
+    const stats = {
+      totalProjects: globalStats?.totalProjects || 0,
+      totalNotes: globalStats?.totalNotes || 0,
+      totalAudioNotes: globalStats?.totalAudioNotes || 0,
+      totalImages: globalStats?.totalImages || 0,
+    };
 
-  return {
-    props: {
-      projects,
-      stats,
-    },
-  };
+    return {
+      props: {
+        projects,
+        stats,
+      },
+    };
+  } catch (error) {
+    console.error('Error in getServerSideProps:', error);
+    return {
+      props: {
+        projects: [],
+        stats: {
+          totalProjects: 0,
+          totalNotes: 0,
+          totalAudioNotes: 0,
+          totalImages: 0,
+        },
+      },
+    };
+  }
 };
 
 export default Home;

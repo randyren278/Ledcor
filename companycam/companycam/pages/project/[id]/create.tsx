@@ -14,10 +14,11 @@ import {
   Mic,
   Sparkles,
 } from 'lucide-react';
-import CameraRecorder from '../../../components/CameraRecorder';
-import { Project, RecordingStatus } from '../../../types';
+import CameraRecorder from '@/components/CameraRecorder';
+import { Project, RecordingStatus } from '../../../types'; // Adjusted path based on directory structure
+
 import { GetServerSideProps, NextPage } from 'next';
-import { getProject } from '../../../lib/data';
+import { getProject } from '@/lib/data'; // Adjusted path to use absolute imports
 
 interface Props {
   project: Project;
@@ -359,22 +360,31 @@ const CreateNote: NextPage<Props> = ({ project }) => {
   );
 };
 
-// ─── Fetch project on the server ─────────────────────────────────────────────────
+// ─── Fixed getServerSideProps to use direct function calls ─────────────────────────────
 export const getServerSideProps: GetServerSideProps = async (context) => {
-  const { id } = context.params as { id: string };
-  const project = getProject(id);
+  try {
+    const { id } = context.params as { id: string };
+    
+    // Use direct function calls instead of HTTP requests
+    const project = getProject(id);
 
-  if (!project) {
+    if (!project) {
+      return {
+        notFound: true,
+      };
+    }
+
+    return {
+      props: {
+        project,
+      },
+    };
+  } catch (error) {
+    console.error('Error in getServerSideProps:', error);
     return {
       notFound: true,
     };
   }
-
-  return {
-    props: {
-      project,
-    },
-  };
 };
 
 export default CreateNote;
