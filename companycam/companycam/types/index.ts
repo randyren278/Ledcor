@@ -42,6 +42,7 @@ export interface Note {
     note?: Note;
     error?: string;
     reportUrl?: string;
+    pdfBase64?: string;
   }
   
   export interface TranscriptionResult {

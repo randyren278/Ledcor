@@ -4,12 +4,13 @@ import nextConnect from 'next-connect';
 import multer from 'multer';
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
 import { spawn } from 'child_process';
 import { getProject, addNoteToProject } from '../../lib/data';
 import { Note, TranscriptionResult, UploadResponse } from '../../types';
 import PDFDocument from 'pdfkit';
 
-// Extend NextApiRequest to include files from multer
+// Extend NextApiRequest so we get `files`
 interface ExtendedNextApiRequest extends NextApiRequest {
   files?: {
     audio?: Express.Multer.File[];
@@ -17,136 +18,83 @@ interface ExtendedNextApiRequest extends NextApiRequest {
   };
 }
 
-// Ensure upload directory exists
-const uploadDir = path.join(process.cwd(), 'public', 'uploads');
+// Are we in production on Vercel?
+const isProd = process.env.NODE_ENV === 'production';
+
+// Choose an upload folder that’s writable:
+const baseDir   = isProd ? os.tmpdir() : path.join(process.cwd(), 'public');
+const uploadDir = path.join(baseDir, 'uploads');
+const reportsDir= path.join(baseDir, 'reports');
+
+// Create the folders if they don’t exist yet
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
 }
-
-// Ensure reports directory exists
-const reportsDir = path.join(process.cwd(), 'public', 'reports');
 if (!fs.existsSync(reportsDir)) {
   fs.mkdirSync(reportsDir, { recursive: true });
 }
 
-// Configure multer for file storage
+// Multer setup
 const storage = multer.diskStorage({
   destination: uploadDir,
-  filename: (_, file, callback) => {
-    callback(null, `${Date.now()}_${file.originalname}`);
+  filename: (_, file, cb) => {
+    cb(null, `${Date.now()}_${file.originalname}`);
   }
 });
-
-const upload = multer({ 
+const upload = multer({
   storage,
-  limits: {
-    fileSize: 50 * 1024 * 1024, // 50MB limit
-    files: 11 // 1 audio + 10 images max
-  },
-  fileFilter: (req, file, callback) => {
-    if (file.fieldname === 'audio') {
-      if (file.mimetype.startsWith('audio/')) {
-        callback(null, true);
-      } else {
-        callback(new Error('Audio files only'));
-      }
-    } else if (file.fieldname === 'images') {
-      if (file.mimetype.startsWith('image/')) {
-        callback(null, true);
-      } else {
-        callback(new Error('Image files only'));
-      }
+  limits: { fileSize: 50 * 1024 * 1024, files: 11 },
+  fileFilter: (req, file, cb) => {
+    if (file.fieldname === 'audio' && file.mimetype.startsWith('audio/')) {
+      cb(null, true);
+    } else if (file.fieldname === 'images' && file.mimetype.startsWith('image/')) {
+      cb(null, true);
     } else {
-      callback(new Error('Unexpected field'));
+      cb(new Error('Only audio under field “audio” or images under “images” allowed'));
     }
   }
 });
 
-// Create next-connect handler with proper typing
 const handler = nextConnect<ExtendedNextApiRequest, NextApiResponse<UploadResponse>>({
-  onError: (err: Error, req: ExtendedNextApiRequest, res: NextApiResponse<UploadResponse>) => {
-    console.error('Upload error:', err);
-    res.status(500).json({ 
-      ok: false, 
-      error: err.message || 'Internal server error' 
-    });
+  onError: (err, req, res) => {
+    console.error('Upload Error:', err);
+    res.status(500).json({ ok: false, error: err.message || 'Server error' });
   },
-  onNoMatch: (req: ExtendedNextApiRequest, res: NextApiResponse<UploadResponse>) => {
-    res.status(405).json({ 
-      ok: false, 
-      error: `Method ${req.method} not allowed` 
-    });
+  onNoMatch: (req, res) => {
+    res.status(405).json({ ok: false, error: `Method ${req.method} not allowed` });
   }
 });
+handler.use(upload.fields([{ name: 'audio', maxCount: 1 }, { name: 'images', maxCount: 10 }]));
 
-// Use multer middleware to handle file uploads
-handler.use(upload.fields([
-  { name: 'audio', maxCount: 1 },
-  { name: 'images', maxCount: 10 }
-]));
-
-// Check if we're in a serverless environment (Vercel)
-const isServerless = process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.NODE_ENV === 'production';
-
-
-
-// Function to run Python transcription script (only in development)
-function transcribeAudio(audioPath: string): Promise<TranscriptionResult> {
-  return new Promise((resolve, reject) => {
-    // If in serverless environment, use fallback immediately
-    if (isServerless) {
-      console.log('Serverless environment detected, using fallback transcription');
-      try {
-        const audioStats = fs.statSync(audioPath);
-        const fallback: TranscriptionResult = {
-          success: true,
-          language: 'en',
-          language_probability: 0.95,
-          text: `Audio note recorded on ${new Date().toLocaleDateString()}`,
-          duration: Math.min(Math.max(audioStats.size / 16000, 10), 300)
-        };
-        resolve(fallback);
-      } catch (error) {
-        console.error('Error creating fallback transcription:', error);
-        resolve({
-          success: true,
-          language: 'en',
-          language_probability: 0.95,
-          text: 'Audio note recorded',
-          duration: 60
-        });
-      }
-      return;
-    }
-
+// -------------- TRANSLATION / TRANSCRIPTION LOGIC --------------
+async function runPythonTranscribe(audioPath: string): Promise<TranscriptionResult> {
+  // We only call this in development:
+  return new Promise((resolve) => {
     const scriptPath = path.join(process.cwd(), 'python', 'transcribe.py');
-    
-    console.log('Running transcription script:', scriptPath);
-    console.log('Audio file:', audioPath);
-    
-    // Always use fallback if script doesn't exist
     if (!fs.existsSync(scriptPath)) {
-      console.warn('Transcription script not found, using fallback');
-      resolve({
+      console.warn('Dev: transcribe.py missing → fallback');
+      return resolve({
         success: true,
         language: 'en',
         language_probability: 0.95,
-        text: 'Audio note recorded - transcription script not available',
+        text: 'Audio note recorded – transcription script not available',
         duration: 60
       });
-      return;
     }
-    
     if (!fs.existsSync(audioPath)) {
-      reject(new Error('Audio file not found'));
-      return;
+      return resolve({
+        success: false,
+        error: 'Audio file not found'
+      });
     }
-    
-    let pythonProcess: any;
-    let resolved = false;
-    
+
+    let stdout = '';
+    let stderr = '';
+    let didResolve = false;
+
+    let pyProc;
     try {
-      pythonProcess = spawn('python3', [scriptPath, audioPath], {
+      pyProc = spawn('python3', [scriptPath, audioPath], {
         env: {
           ...process.env,
           WHISPER_MODEL_SIZE: 'base',
@@ -154,131 +102,127 @@ function transcribeAudio(audioPath: string): Promise<TranscriptionResult> {
           WHISPER_COMPUTE_TYPE: 'int8'
         }
       });
-    } catch (spawnError) {
-      console.warn('Failed to spawn Python process, using fallback:', spawnError);
-      resolve({
+    } catch (spawnErr) {
+      console.warn('Failed to spawn Python → fallback', spawnErr);
+      return resolve({
         success: true,
         language: 'en',
         language_probability: 0.95,
-        text: 'Audio note recorded - Python process failed to start',
+        text: 'Audio note recorded – Python failed to start',
         duration: 60
       });
-      return;
     }
-    
-    let stdout = '';
-    let stderr = '';
-    
-    pythonProcess.stdout.on('data', (data: Buffer) => {
+
+    pyProc.stdout.on('data', (data: Buffer) => {
       stdout += data.toString();
     });
-    
-    pythonProcess.stderr.on('data', (data: Buffer) => {
+    pyProc.stderr.on('data', (data: Buffer) => {
       stderr += data.toString();
-      console.log('Transcription progress:', data.toString().trim());
+      console.log('Whisper stderr:', data.toString().trim());
     });
-    
-    pythonProcess.on('close', (code: number | null) => {
-      if (resolved) return;
-      resolved = true;
-      
+
+    pyProc.on('close', (code) => {
+      if (didResolve) return;
+      didResolve = true;
       if (code === 0 && stdout.trim()) {
         try {
-          // Clean the stdout - remove any non-JSON content
+          // extract the JSON part from stdout
           const cleanOutput = stdout.trim();
-          let jsonStart = cleanOutput.indexOf('{');
-          let jsonEnd = cleanOutput.lastIndexOf('}') + 1;
-          
-          if (jsonStart === -1 || jsonEnd === 0) {
-            throw new Error('No JSON found in output');
-          }
-          
-          const jsonString = cleanOutput.substring(jsonStart, jsonEnd);
-          const result: TranscriptionResult = JSON.parse(jsonString);
-          
+          const start = cleanOutput.indexOf('{');
+          const end   = cleanOutput.lastIndexOf('}') + 1;
+          if (start < 0 || end < 0) throw new Error('No JSON found');
+          const jsonStr = cleanOutput.slice(start, end);
+          const result: TranscriptionResult = JSON.parse(jsonStr);
           if (result.success && result.text) {
-            console.log('Transcription successful:', result.text.substring(0, 50) + '...');
-            resolve(result);
+            return resolve(result);
           } else {
-            throw new Error(result.error || 'Transcription returned no text');
+            throw new Error(result.error || 'No text returned');
           }
-        } catch (parseError) {
-          console.warn('Failed to parse transcription result, using fallback. Raw output:', stdout);
-          console.warn('Parse error:', parseError);
-          resolve({
+        } catch (parseErr) {
+          console.warn('Parse error → fallback', parseErr, stdout);
+          return resolve({
             success: true,
             language: 'en',
             language_probability: 0.95,
-            text: 'Audio note recorded - transcription parsing failed',
+            text: 'Audio note recorded – parse failed',
             duration: 60
           });
         }
       } else {
-        console.warn(`Transcription failed with code ${code}, using fallback. Stderr:`, stderr);
-        resolve({
+        console.warn(`Python exited ${code} → fallback`, stderr);
+        return resolve({
           success: true,
           language: 'en',
           language_probability: 0.95,
-          text: 'Audio note recorded - transcription process failed',
+          text: 'Audio note recorded – transcription process failed',
           duration: 60
         });
       }
     });
-    
-    pythonProcess.on('error', (error: Error) => {
-      if (resolved) return;
-      resolved = true;
-      console.warn(`Python process error, using fallback:`, error.message);
-      resolve({
+
+    pyProc.on('error', (err) => {
+      if (didResolve) return;
+      didResolve = true;
+      console.warn('Python process error → fallback', err);
+      return resolve({
         success: true,
         language: 'en',
         language_probability: 0.95,
-        text: 'Audio note recorded - process error',
+        text: 'Audio note recorded – process error',
         duration: 60
       });
     });
-    
-    // Timeout after 1 minute in development
+
+    // Timeout after 60s
     setTimeout(() => {
-      if (resolved) return;
-      resolved = true;
-      if (pythonProcess) {
-        pythonProcess.kill();
-      }
-      console.warn('Transcription timed out, using fallback');
-      resolve({
+      if (didResolve) return;
+      didResolve = true;
+      if (pyProc) pyProc.kill();
+      console.warn('Transcription timed out → fallback');
+      return resolve({
         success: true,
         language: 'en',
         language_probability: 0.95,
-        text: 'Audio note recorded - transcription timed out',
+        text: 'Audio note recorded – transcription timed out',
         duration: 60
       });
-    }, 60 * 1000);
+    }, 60_000);
   });
 }
 
-// Function to create a note from transcription results
+async function transcribeAudio(audioPath: string): Promise<TranscriptionResult> {
+  if (!isProd) {
+    // Dev → try real Python
+    return runPythonTranscribe(audioPath);
+  }
+  // Production (Vercel) → always fallback
+  return {
+    success: true,
+    language: 'en',
+    language_probability: 0.95,
+    text: `Audio note recorded on ${new Date().toLocaleDateString()}`,
+    duration: 60
+  };
+}
+
+// -------------- NOTE CREATION --------------
 async function createNote(
-  audioPath: string, 
-  imagePaths: string[], 
+  audioPath: string,
+  imagePaths: string[],
   transcriptionResult: TranscriptionResult
 ): Promise<Note> {
   const timestamp = new Date().toISOString();
   const audioBasename = path.basename(audioPath);
   const imageBasenames = imagePaths.map(p => path.basename(p));
-  
-  // Create summary from first 10 words of transcription
-  let summary = '';
+
+  // summary = first 10 words of transcription
+  let summary = 'Audio note recorded';
   if (transcriptionResult.text) {
     const words = transcriptionResult.text.trim().split(/\s+/);
     summary = words.slice(0, 10).join(' ');
-    if (words.length > 10) {
-      summary += '...';
-    }
-  } else {
-    summary = 'Audio note recorded';
+    if (words.length > 10) summary += '…';
   }
-  
+
   const note: Note = {
     id: Date.now().toString(),
     timestamp,
@@ -292,214 +236,172 @@ async function createNote(
       `Duration: ${transcriptionResult.duration ? Math.round(transcriptionResult.duration) : 0}s`,
       `Language: ${transcriptionResult.language || 'unknown'}`,
       `Confidence: ${transcriptionResult.language_probability ? Math.round(transcriptionResult.language_probability * 100) : 0}%`,
-      isServerless ? 'Note: Full AI transcription available in development mode' : 'Processed with AI transcription'
+      isProd
+        ? 'Note: fallback transcription (production)'
+        : 'Processed with AI transcription (development)',
     ]
   };
-  
   return note;
 }
 
-// Helper: Generate a PDF report for the note
-function generatePdfReport(note: Note, projectName: string, fullImagePaths: string[]): Promise<string> {
+// -------------- PDF GENERATION --------------
+async function generatePdfReport(
+  note: Note,
+  projectName: string,
+  fullImagePaths: string[]
+): Promise<string> {
+  // Instead of writing to public/reports, we write into /tmp/reports on Vercel
   return new Promise((resolve, reject) => {
     try {
       const pdfFilename = `${note.id}.pdf`;
-      const pdfPath = path.join(reportsDir, pdfFilename);
-      
+      const pdfPath     = path.join(reportsDir, pdfFilename);
       const doc = new PDFDocument({ autoFirstPage: true });
       const writeStream = fs.createWriteStream(pdfPath);
       doc.pipe(writeStream);
-      
-      // Add title
+
+      // Title
       doc.fontSize(18).text(`Project: ${projectName}`, { underline: true });
       doc.moveDown(0.5);
-      
-      // Note metadata
+
+      // Metadata
       doc.fontSize(12).text(`Note ID: ${note.id}`);
       doc.text(`Timestamp: ${note.timestamp}`);
       doc.moveDown(0.5);
-      
-      // Transcription text
+
+      // Transcription
       doc.fontSize(14).text('Transcription:', { underline: true });
       doc.moveDown(0.25);
       doc.fontSize(12).text(note.transcription || '— no transcription —');
       doc.moveDown(0.5);
-      
+
       // Summary
       doc.fontSize(14).text('Summary:', { underline: true });
       doc.moveDown(0.25);
       doc.fontSize(12).text(note.summary || '— no summary —');
       doc.moveDown(0.5);
-      
+
       // Insights
       if (note.insights && note.insights.length > 0) {
         doc.fontSize(14).text('Insights:', { underline: true });
-        note.insights.forEach(insight => {
-          doc.fontSize(12).text(`• ${insight}`);
+        note.insights.forEach(ins => {
+          doc.fontSize(12).text(`• ${ins}`);
         });
         doc.moveDown(0.5);
       }
-      
-      // Images (if any)
+
+      // Images
       if (fullImagePaths.length > 0) {
         doc.addPage();
         doc.fontSize(14).text('Attached Images:', { underline: true });
         doc.moveDown(0.5);
-        
-        const maxWidth = 250;
-        const maxHeight = 250;
+
+        const maxW = 250;
+        const maxH = 250;
         let x = doc.page.margins.left;
         let y = doc.y;
-        
+
         fullImagePaths.forEach((imgPath, idx) => {
           try {
             if (fs.existsSync(imgPath)) {
-              doc.image(imgPath, x, y, { fit: [maxWidth, maxHeight] });
+              doc.image(imgPath, x, y, { fit: [maxW, maxH] });
             }
           } catch (e) {
-            console.warn(`Failed to embed image ${imgPath}:`, e);
+            console.warn(`Could not embed ${imgPath}:`, e);
           }
-          
-          x += maxWidth + 20;
+          x += maxW + 20;
           if ((idx + 1) % 2 === 0) {
             x = doc.page.margins.left;
-            y += maxHeight + 20;
-            if (y + maxHeight > doc.page.height - doc.page.margins.bottom) {
+            y += maxH + 20;
+            if (y + maxH > doc.page.height - doc.page.margins.bottom) {
               doc.addPage();
               y = doc.page.margins.top;
             }
           }
         });
       }
-      
+
       doc.end();
-      
       writeStream.on('finish', () => {
-        resolve(`/reports/${pdfFilename}`);
+        // Read PDF back as base64 so we can send it
+        const buf = fs.readFileSync(pdfPath);
+        const base64Pdf = buf.toString('base64');
+        resolve(base64Pdf);
       });
-      
-      writeStream.on('error', (err) => {
-        reject(err);
-      });
-    } catch (error) {
-      reject(error);
+      writeStream.on('error', (err) => reject(err));
+    } catch (err) {
+      reject(err);
     }
   });
 }
 
-// POST handler for file uploads
-handler.post(async (req: ExtendedNextApiRequest, res: NextApiResponse<UploadResponse>) => {
-  console.log('Upload request received');
-  console.log('Environment:', isServerless ? 'Serverless' : 'Development');
-
+// -------------- THE POST HANDLER --------------
+handler.post(async (req: ExtendedNextApiRequest, res) => {
+  console.log('Upload request (prod? ' + isProd + ')');
   const { projectId } = req.body;
-  
-  // Validate required fields
   if (!projectId || typeof projectId !== 'string') {
-    return res.status(400).json({ 
-      ok: false, 
-      error: 'Project ID is required and must be a string' 
-    });
+    return res.status(400).json({ ok: false, error: 'Project ID is required' });
   }
 
   try {
-    // Get project and validate it exists
     const project = getProject(projectId);
     if (!project) {
-      return res.status(404).json({ 
-        ok: false, 
-        error: 'Project not found' 
-      });
+      return res.status(404).json({ ok: false, error: 'Project not found' });
     }
 
-    // Extract uploaded files
     const audioFile = req.files?.audio?.[0];
-    const imageFiles = req.files?.images || [];
-    
+    const imageFiles= req.files?.images || [];
     if (!audioFile) {
-      return res.status(400).json({ 
-        ok: false, 
-        error: 'Audio file is required' 
-      });
+      return res.status(400).json({ ok: false, error: 'Audio file is required' });
     }
 
-    console.log('Processing note with:', {
-      audioPath: audioFile.path,
-      imagePaths: imageFiles.map(f => f.path),
-      audioSize: audioFile.size,
-      imageCount: imageFiles.length
-    });
-
-    // Validate file paths exist
+    // Ensure multer actually saved it
     if (!fs.existsSync(audioFile.path)) {
-      return res.status(500).json({ 
-        ok: false, 
-        error: 'Uploaded audio file not found' 
-      });
+      return res.status(500).json({ ok: false, error: 'Uploaded audio not found on disk' });
     }
 
-    // Transcribe audio with fallback support
-    console.log('Starting transcription...');
+    // Transcribe (or fallback)
+    console.log('Starting transcription (dev? ' + (!isProd) + ')');
     const transcriptionResult = await transcribeAudio(audioFile.path);
-    console.log('Transcription completed:', {
-      success: transcriptionResult.success,
-      language: transcriptionResult.language,
-      textLength: transcriptionResult.text?.length || 0,
-      duration: transcriptionResult.duration,
-      isServerless
-    });
+    console.log('Transcription complete:', transcriptionResult);
 
-    // Create note with transcription results
+    // Build Note
     const note = await createNote(
-      audioFile.path, 
+      audioFile.path,
       imageFiles.map(f => f.path),
       transcriptionResult
     );
-    
-    // Add note to project
-    const updatedProject = addNoteToProject(projectId, note);
-    if (!updatedProject) {
-      return res.status(500).json({ 
-        ok: false, 
-        error: 'Failed to add note to project' 
-      });
-    }
-    
-    console.log('Note created successfully:', note.id);
 
-    // Generate PDF report
+    // Add to project
+    const updated = addNoteToProject(projectId, note);
+    if (!updated) {
+      return res.status(500).json({ ok: false, error: 'Failed to attach note to project' });
+    }
+
+    // Generate PDF → base64
     const fullImagePaths = imageFiles.map(f => path.resolve(f.path));
-    let reportUrl = '';
+    let pdfBase64 = '';
     try {
-      reportUrl = await generatePdfReport(note, project.name, fullImagePaths);
-      console.log('PDF report generated at:', reportUrl);
+      pdfBase64 = await generatePdfReport(note, project.name, fullImagePaths);
     } catch (pdfErr) {
-      console.error('Failed to generate PDF report:', pdfErr);
+      console.error('PDF generation failed:', pdfErr);
     }
 
-    // Respond with the created note
-    res.status(200).json({ 
-      ok: true, 
+    // Return the note + PDF (base64) in JSON
+    return res.status(200).json({
+      ok: true,
       note,
-      reportUrl
+      pdfBase64  // client can do: window.open(`data:application/pdf;base64,${pdfBase64}`)
     });
-    
-  } catch (error) { 
-    console.error('Processing error:', error);
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
-    
-    res.status(500).json({ 
-      ok: false, 
-      error: errorMessage 
-    }); 
+  } catch (err) {
+    console.error('Handler error:', err);
+    const message = err instanceof Error ? err.message : 'Unknown error';
+    return res.status(500).json({ ok: false, error: message });
   }
 });
 
-// Export the API configuration
-export const config = { 
-  api: { 
-    bodyParser: false // Required for multer
-  } 
+// We disable the default body parser so multer can run
+export const config = {
+  api: { bodyParser: false }
 };
 
 export default handler;
