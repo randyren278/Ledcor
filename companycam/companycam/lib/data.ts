@@ -1,11 +1,13 @@
 // /lib/data.ts
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
 import { Project, Note } from '../types';
 
 // ─── Setup: location of our on‐disk JSON ────────────────────────────────────────
-const DATA_DIR = path.join(process.cwd(), 'data');
-const DATA_FILE = path.join(DATA_DIR, 'db.json');
+const isProd = process.env.NODE_ENV === "production";
+const DATA_DIR = isProd ? path.join(os.tmpdir(), "companycam-data") : path.join(process.cwd(), "data");
+const DATA_FILE = path.join(DATA_DIR, "db.json");
 
 // In‐memory “cache” of our database. We will read from disk at startup
 // and write back whenever something changes.
@@ -31,7 +33,7 @@ function loadFromDisk(): void {
     db = parsed;
   } catch (e) {
     // If file does not exist or is invalid JSON, we’ll fallback to empty
-    console.warn('Could not load data/db.json—starting with empty store.');
+    console.warn(`Could not load ${DATA_FILE}—starting with empty store.`);
     db = { projects: {} };
   }
 }
@@ -41,6 +43,7 @@ function saveToDisk(): void {
     ensureDataDirExists();
     fs.writeFileSync(DATA_FILE, JSON.stringify(db, null, 2), 'utf-8');
   } catch (e) {
+    // Writing may fail on read-only filesystems.
     console.error('Failed to save data to disk:', e);
   }
 }
