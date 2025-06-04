@@ -26,6 +26,7 @@ export interface Note {
   export interface MediaData {
     audio: File;
     images: File[];
+    transcript: string;
   }
 
   export interface Stats {
@@ -45,14 +46,6 @@ export interface Note {
     pdfBase64?: string;
   }
   
-  export interface TranscriptionResult {
-    success: boolean;
-    language?: string;
-    language_probability?: number;
-    text?: string;
-    duration?: number;
-    error?: string;
-  }
   
   export interface APIError {
     error: string;
