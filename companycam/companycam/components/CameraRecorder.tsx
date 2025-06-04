@@ -1,16 +1,7 @@
 // /components/CameraRecorder.tsx
 import { useEffect, useRef, useState } from "react";
 import { Camera, Mic, Square, Circle, Play } from "lucide-react";
-
-interface MediaData {
-  audio: File;
-  images: File[];
-  transcript: string;
-}
-
-interface CameraRecorderProps {
-  onFinish: (data: MediaData) => void;
-}
+import type { MediaData, CameraRecorderProps } from "@/types";
 
 export default function CameraRecorder({ onFinish }: CameraRecorderProps) {
   const videoRef = useRef<HTMLVideoElement>(null);

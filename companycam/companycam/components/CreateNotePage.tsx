@@ -1,11 +1,6 @@
 import { useState, useEffect } from 'react';
 import { ArrowLeft, Loader2, CheckCircle, AlertCircle, Upload, Brain, FileText } from 'lucide-react';
-
-interface MediaData {
-  audio: File;
-  images: File[];
-  transcript: string;
-}
+import type { MediaData } from '@/types';
 
 interface CreateNotePageProps {
   projectId: string;
